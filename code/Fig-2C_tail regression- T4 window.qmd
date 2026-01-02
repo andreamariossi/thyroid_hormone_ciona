@@ -1,0 +1,522 @@
+---
+title: "Fig-2_tail regression- T4 window"
+author: "Andrea Mariossi"
+format: 
+  html:
+    code-fold: false
+    embed-resources: true 
+engine: knitr
+editor: visual
+grid: 
+  sidebar-width: 100px
+  body-width: 2000px
+  margin-width: 100px
+  gutter-width: 3.5rem
+execute:
+  fig-align: center
+  fig-format: png
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r}
+rm(list = ls())
+knitr::opts_chunk$set(
+  echo = TRUE,
+  fig.width = 18,
+  fig.height = 10,
+  fig.align = "center",
+  out.width = "70%",
+  column = "page"
+)
+
+
+# ----- LIBRARIES -----
+# Package loading
+suppressPackageStartupMessages({
+  # Data manipulation & file import
+  library(tidyverse)
+  library(readxl)
+  library(paletteer)
+  library(rstatix)
+  library(ggpubr)
+  library(knitr)
+  library(Cairo)
+  library(lme4)
+  library(lmerTest)
+  library(emmeans)
+  library(kableExtra)
+  library(patchwork)
+  library(ggdist)
+  library(gghalves)
+  library(ggforce)
+  library(forcats)
+  library(cowplot)
+  library(scales)
+})
+
+```
+
+```{r}
+# ===== path =====
+file_path <- "/Users/andrea/Princeton Dropbox/Andrea Mariossi/4.paper_archive/2025_thyroid_pathway_&_metamorphosis/3.1.ScienceAdvances_submission_rev/tables/"
+
+# ===== theme & style =====
+custom_theme <- function() {
+  theme(
+    axis.ticks = element_line(linewidth = 0.5),
+    axis.ticks.length = unit(0.09, "cm"),
+    legend.key.height = unit(20, "pt"),
+    axis.line = element_blank(),
+    panel.border = element_rect(colour = "black", fill = NA, linewidth = 1),
+    panel.background = element_blank(),
+    plot.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    legend.background = element_blank(),
+    legend.box.background = element_blank(),
+    legend.key = element_blank(),
+    strip.background = element_blank(),
+  )
+}
+
+# ===== set theme =====
+theme_set(theme_pubr(base_size = 13,
+                     base_family = "Helvetica") + custom_theme())
+
+# ===== extra bits =====
+no_legend <- theme(legend.position = "none")
+axis_text_45 <- theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+
+# ===== color palette =====
+contPalette <- paletteer_c("ggthemes::Red-Green-Gold Diverging", 30)
+
+stage_order <- c("earTII", "midTII", "latTII", "latTIII", "larva")
+
+# --- Condition colors  ---
+condition_colors <- c(
+  "control" = "#999999",
+  "1"       = "#d9f0a3",
+  "2"       = "#addd8e",
+  "3"       = "#78c679",
+  "5"       = "#41ab5d"
+)
+
+# ===== pretty p-values for kable =====
+format_pvalues <- function(df) {
+  df %>%
+    mutate(across(any_of(c("p.value", "p.value.x", "p.value.y", "adj.p.value")),
+                  ~ case_when(
+                    . < 0.001 ~ format(., scientific = TRUE, digits = 2),
+                    TRUE ~ as.character(round(., 4))
+                  )))
+}
+```
+
+```{r}
+
+T4_attach.df <- read_excel(paste0(file_path,"7_T4_percentange_attachement.xlsx"))
+T4_attach.df
+# Clean and prepare data in one pipeline
+data_tidy <- T4_attach.df %>%
+  mutate(
+    condition = factor(condition, levels = c("control", "1", "2", "3", "5")),
+    fraction = attached / total,
+    non_attached = total - attached
+  ) %>%
+  group_by(condition) %>%
+  mutate(
+    rep = row_number(),
+    replicate = as.factor(rep),
+    rep_offset = rep - mean(rep)
+  ) %>%
+  ungroup()
+
+# Create long format for plotting
+data_tidy_long <- data_tidy %>%
+  pivot_longer(
+    cols = c(attached, non_attached),
+    names_to = "status",
+    values_to = "count"
+  )
+
+# Calculate summary statistics efficiently
+data_summary <-  data_tidy %>%
+  group_by(condition) %>%
+  summarise(
+    mean_attached = mean(attached),
+    mean_fraction = mean(fraction),
+    median_fraction = median(fraction),
+    sd_attached = sd(attached),
+    sd_fraction = sd(fraction),
+    total_count = sum(total),
+    n_attached = sum(attached),
+    n_unattached = total_count - n_attached,
+    attached_pct = n_attached / total_count * 100,
+    unattached_pct = n_unattached / total_count * 100,
+    .groups = "drop"
+  )
+data_summary
+
+
+# ------------------------
+# ---- descriptive stats ----
+# ------------------------
+
+# - Total embryos overall (sum of total)
+data_tidy |>
+  summarise(total_embryos = sum(total, na.rm = TRUE))
+
+# - Number of replicates per condition
+data_tidy |>
+  summarise(n_replicates = n(), .by = condition)
+
+# - Total embryos per condition
+data_tidy |>
+  summarise(total_embryos = sum(total, na.rm = TRUE), .by = condition)
+
+# - Total attached / non-attached per condition
+data_tidy |>
+  summarise(
+    attached_embryos = sum(attached, na.rm = TRUE),
+    non_attached_embryos = sum(non_attached, na.rm = TRUE),
+    .by = condition
+  )
+
+# to add n to plot
+n_df <- data_tidy %>%
+  dplyr::group_by(condition) %>%
+  dplyr::summarise(total = sum(total, na.rm = TRUE), .groups = "drop") %>%
+  dplyr::mutate(label = paste0("n=", total))
+```
+
+### Pie chart
+
+```{r}
+
+# ------------------------
+# ---- Pie-chart data (percent WITHIN each condition) ----
+# ------------------------
+
+plot_data <- data_tidy %>%
+  group_by(condition) %>%
+  summarise(
+    total_attached   = sum(attached, na.rm = TRUE),
+    total_unattached = sum(total - attached, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(
+    cols = c(total_attached, total_unattached),
+    names_to = "status",
+    values_to = "count"
+  ) %>%
+  mutate(status = recode(status,
+                         total_attached = "Attached",
+                         total_unattached = "Unattached")) %>%
+  group_by(condition) %>%
+  mutate(
+    total   = sum(count),
+    percent = 100 * count / total,
+    fraction = percent / 100,
+    ypos    = cumsum(percent) - 0.5 * percent,
+    label   = sprintf("%s\n%.1f%%", status, percent),
+    label2 = paste0(status, "\n", scales::percent(fraction, accuracy = 1))) %>%
+  ungroup()
+  
+# ---- Colors for pie segments ----
+status_colors <- c("Attached" = "#ee3637", "Unattached" = "#747676")
+
+# ---- Plot ----
+pie_chart <- ggplot(plot_data, aes(x = "", y = percent, fill = status)) +
+  geom_col(width = 1, color = "white") +
+  coord_polar(theta = "y", start = 0) +
+  geom_text(aes(y = ypos, label = label), color = "white", size = 4, fontface = "bold") +
+  facet_wrap(~ condition, nrow = 1) +
+  scale_fill_manual(values = status_colors) +
+  labs(title = "Attachment Status by Condition", fill = "Status") +
+  theme_void() +
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
+        strip.text = element_text(face = "bold", size = 11)
+        )
+
+pie_chart +
+  geom_text(
+    data = plot_data %>% dplyr::distinct(condition, total),
+    # aes(x = 0, y = 0, label = paste0("n=", total)),   # <-- center
+    aes(x = 1, y = 0, label = paste0("n=", total)), 
+    inherit.aes = FALSE,
+    color = "black", size = 4, fontface = "bold"
+  )
+
+# ------------------------
+# Donut chart 
+# ------------------------
+donut_chart <- ggplot(plot_data, aes(x = 2, y = percent, fill = status)) +
+    geom_bar(stat = "identity", width = 1, color = "white") +
+    coord_polar(theta = "y", start = 0) +
+    xlim(0.5, 2.5) +  # Creates the donut hole
+    geom_text(aes(y = ypos, label = round(percent, 1)), 
+              color = "white", size = 4, fontface = "bold") +
+  facet_wrap(~ condition, nrow = 1) +
+    scale_fill_manual(values = status_colors) +
+    labs(
+      title = "Attachment Percentage by Condition",
+      fill = "Status"
+    ) +
+    theme_void() +
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
+        strip.text = element_text(face = "bold", size = 11)
+        )
+
+donut_chart +
+  geom_text(
+    data = plot_data %>% dplyr::distinct(condition, total),
+    aes(x = 0.55, y = 25, label = paste0("n=", total)),
+    inherit.aes = FALSE,
+    color = "black",
+    size = 4,
+    fontface = "bold"
+  )
+
+
+```
+
+### QC of the data
+
+individual replicates
+
+```{r}
+#| fig-height: 16
+#| fig-width: 18
+
+# ---- stacked bar plot  ----
+stacked_bar <- ggplot(plot_data, aes(condition, count, fill = status)) +
+  geom_col(position = "fill", width = 0.7) +
+  geom_text(aes(label = count),
+            position = position_fill(vjust = 0.5),
+            color = "white", fontface = "bold") +
+  scale_fill_manual(values = status_colors) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    title = "Proportion of Attached vs Unattached by Condition",
+    x = "Condition", y = "Percentage", fill = "Status"
+  ) +
+  custom_theme() +
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = 0.5, face = "bold"),
+        panel.grid.major.x = element_blank())
+# stacked_bar
+
+# ---- dodged bar plot  ----
+dodged_bar <- ggplot(plot_data, aes(condition, count, fill = status)) +
+  geom_col(position = "dodge", width = 0.7) +
+  geom_text(aes(label = count),
+            position = position_dodge(width = 0.7),
+            vjust = -0.4, size = 3.5) +
+  scale_fill_manual(values = status_colors) +
+  labs(
+    title = "Count of Attached vs Unattached by Condition",
+    x = "Condition", y = "Count", fill = "Status"
+  ) +
+  custom_theme() +
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = 0.5, face = "bold"))
+# dodged_bar
+
+# ---- heatmap per replcicate ----
+
+heatmap_plot <- ggplot(data_tidy_long, aes(condition, replicate, fill = fraction)) +
+  geom_tile(color = "white", linewidth = 1) +
+  geom_text(aes(label = sprintf("%.1f%%", 100 * fraction)),
+            color = "white", fontface = "bold") +
+  # scale_fill_viridis_b()+
+  scale_fill_gradient2(
+    low = "#d7191c", mid = "#ffffbf", high = "#1a9641",
+    midpoint = 0.6, labels = scales::percent_format()
+  ) +
+  labs(title = "Attachment Rate Heatmap by Condition and Replicate",
+       x = "Condition", y = "Replicate", fill = "Attachment Rate") +
+  custom_theme() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+        panel.grid = element_blank()) +
+  coord_equal()
+# heatmap_plot
+
+# ---- points per replcicate ----
+points_by_rep <- data_tidy |>
+  filter(!is.na(fraction)) |>
+  ggplot(aes(x = condition, y = fraction)) +
+  # black horizontal bar at the same y (errorbar with ymin==ymax)
+  geom_errorbar(
+    aes(ymin = fraction, ymax = fraction),
+    width = 0.35,
+    linewidth = 1.6,
+    color = "black"
+  ) +
+  # colored point with black outline
+  geom_point(
+    aes(fill = condition),
+    shape = 21,
+    size = 3,
+    color = "black",
+    stroke = 0.8
+  ) +
+  geom_hline(
+    yintercept = 0.5,
+    linetype = "dashed",
+    linewidth = 0.8,
+    color = "grey70"
+  ) +
+  facet_wrap(~ replicate, ncol = 4) +
+  scale_fill_manual(values = condition_colors) +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  labs(title = "Attachment Fraction by Condition for Each Replicate", x = "Condition", y = "Attached Fraction") +
+  custom_theme() +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+# points_by_rep
+
+
+# create multi-panel figure
+# --------------------------
+
+# create a combined figure with the best plots
+# combined_plot <- (heatmap_plot | stacked_bar) /
+  # (dodged_bar) + plot_layout(guides = "collect") +
+  plot_annotation(tag_levels = 'a') #& theme(
+  #   plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+  #   plot.subtitle = element_text(hjust = 0.5, size = 11)
+  # )
+# combined_plot
+
+
+combined_plot <-
+  ((heatmap_plot + labs(title = NULL)) | (points_by_rep + labs(title = NULL))) /
+  ((stacked_bar + labs(title = NULL)) | (dodged_bar + labs(title = NULL))) +
+  plot_layout(guides = "collect") +
+  plot_annotation(tag_levels = "a") &
+  theme(plot.title = element_blank())
+
+  # ((heatmap_plot + labs(title = NULL)) | (points_by_rep + labs(title = NULL))) /
+  # (stacked_bar + labs(title = NULL)) /
+  # (dodged_bar + labs(title = NULL)) +
+  # plot_layout(guides = "collect") +
+  # plot_annotation(tag_levels = "a") &
+  # theme(plot.title = element_blank())
+
+combined_plot
+
+
+
+```
+
+### Replicates plot
+
+```{r}
+
+# --- Replicate  shape  ---
+n_reps <- nlevels(data_tidy$replicate)
+n_reps
+
+cond_levels <- c("control","1","2","3","5")
+
+# Create shape values based on number of replicates
+if (n_reps <= 5) {
+  shape_values <- 21:(20 + n_reps)  # 21, 22, 23, 24, 25
+} else if (n_reps <= 7) {
+  shape_values <- c(21:25, 3, 4)  # Mix filled and open shapes
+} else {
+  shape_values <- 1:n_reps  # Default to open shapes if many replicates
+}
+
+
+# --- fast violin plot ---
+violin_plot <- ggplot(data_tidy, aes(condition, fraction, fill = condition)) +
+  geom_violin(alpha = 0.6, width = 0.8, trim = TRUE) +
+  geom_boxplot(width = 0.2, alpha = 0.8, outlier.shape = NA) +
+  geom_jitter(aes(color = "black"), width = 0.1, height = 0, size = 2.5, alpha = 0.7) +
+  stat_summary(fun = mean, geom = "point", shape = 23, size = 4, fill = "white", color = "black") +
+  stat_summary(fun = mean, geom = "text",
+               aes(label = paste0(round(..y.. * 100, 1), "%")),
+               vjust = -2, size = 3.5, fontface = "bold") +
+  scale_fill_manual(values = condition_colors) +
+  scale_color_manual(values = condition_colors) +
+  scale_y_continuous(limits = c(0.35, 1), labels = scales::percent_format()) +
+  labs(x = "Condition", y = "Attached Fraction") +
+  custom_theme() +
+  theme(legend.position = "none",
+        plot.title = element_text(face = "bold", hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5, size = 9),
+        panel.grid.minor = element_blank())
+violin_plot
+
+# --- figure plot ---
+p <- ggplot(data_tidy, aes(condition, fraction)) +
+  # Half violin
+  gghalves::geom_half_violin(
+    aes(fill = condition),
+    side = "l", adjust = 0.7, alpha = 0.7, width = 1.1,
+    position = position_nudge(x = -0.15),
+    show.legend = FALSE
+  ) +
+  # Half boxplot
+  gghalves::geom_half_boxplot(
+    side = "l", width = 0.2,
+    fill = "white", color = "black",
+    outlier.shape = NA, errorbar.draw = FALSE,
+    position = position_nudge(x = -0.15)
+  ) +
+  # mean/interval pointinterval adjusted to center
+  ggdist::stat_pointinterval(
+    position = position_nudge(x = -0.15),
+    show.legend = FALSE
+  ) +
+  # scales & labels
+  scale_fill_manual(values = condition_colors, guide = "none") +
+  scale_y_continuous(limits = c(0.35, 1), labels = scales::percent_format(), oob = scales::squish) +
+  labs(x = "Condition", y = "Attached Fraction") +
+  custom_theme()
+
+p + geom_point(aes(fill = condition),shape = 21,color = "black",size = 3,    
+    # position = position_dodge(width = 0.2)
+    )  +
+
+  # add n labels near the top
+  geom_text(
+    data = n_df,
+    aes(x = condition, y = 0.98, label = label),
+    inherit.aes = FALSE,
+    size = 4,
+    color = "black"
+  )
+  
+p +  
+  # Sina points pushed right
+    ggforce::geom_sina(
+    aes(fill = condition),
+    shape = 21,
+    # aes(fill = condition, shape = replicate),
+    color = "black",alpha = 2,
+    size = 5, bin_limit = 1, maxwidth = 0.2,
+    show.legend = c(fill = FALSE, shape = TRUE) 
+  ) +
+  scale_shape_manual(values = shape_values[seq_len(n_reps)], name = "Rep") +
+  theme(legend.position = c(0.2,0.8)) +
+
+  # add n labels near the top
+  geom_text(
+    data = n_df,
+    aes(x = condition, y = 0.98, label = label),
+    inherit.aes = FALSE,
+    size = 4,
+    color = "black"
+  )
+
+
+```

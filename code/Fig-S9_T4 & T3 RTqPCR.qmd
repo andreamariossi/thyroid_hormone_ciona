@@ -1,0 +1,530 @@
+---
+title: "Fig- T4 & T3 RT-qPCR"
+author: "Andrea Mariossi"
+format: 
+  html:
+    code-fold: false
+    embed-resources: true 
+engine: knitr
+editor: visual
+grid: 
+  sidebar-width: 100px
+  body-width: 2000px
+  margin-width: 100px
+  gutter-width: 3.5rem
+execute:
+  fig-align: center
+---
+
+# T4 & T3 RT-qPCR
+
+```{r}
+rm(list = ls())
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE, 
+  warning = FALSE,
+  # fig.width = 8,
+  # fig.height = 6,
+  fig.align = "center",
+  out.width = "70%",
+  column = "page"
+)
+
+# Package loading
+suppressPackageStartupMessages({
+  # Data manipulation & file import
+  library(tidyverse)
+  library(readxl)
+  library(paletteer)
+  library(rstatix)
+  library(ggpubr)
+  library(knitr)
+  library(Cairo)
+  library(lme4)
+  library(lmerTest)
+  library(emmeans)
+  library(kableExtra)
+  library(patchwork)  
+})
+```
+
+## Data Loading and Preprocessing
+
+```{r}
+# ===== path =====
+file_path <- "/Users/andrea/Princeton Dropbox/Andrea Mariossi/4.paper_archive/2025_thyroid_pathway_&_metamorphosis/3.1.ScienceAdvances_submission_rev/tables/"
+
+# ===== theme & style =====
+custom_theme <- function() {
+  theme(
+    axis.ticks = element_line(linewidth = 0.5),
+    axis.ticks.length = unit(0.09, "cm"),
+    legend.key.height = unit(20, "pt"),
+    axis.line = element_blank(),
+    panel.border = element_rect(colour = "black", fill = NA, linewidth = 1),
+    panel.background = element_blank(),
+    plot.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    legend.background = element_blank(),
+    legend.box.background = element_blank(),
+    legend.key = element_blank(),
+    strip.background = element_blank(),
+  )
+}
+
+# ===== set theme =====
+theme_set(theme_pubr(base_size = 13,
+                     base_family = "Helvetica") + custom_theme())
+
+# ===== extra bits =====
+no_legend <- theme(legend.position = "none")
+axis_text_45 <- theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+
+# ===== color palette =====
+contPalette <- paletteer_c("ggthemes::Red-Green-Gold Diverging", 30)
+
+stage_order <- c("earTII", "midTII", "latTII", "latTIII", "larva")
+
+# ===== pretty p-values for kable =====
+format_pvalues <- function(df) {
+  df %>%
+    mutate(across(any_of(c("p.value", "p.value.x", "p.value.y", "adj.p.value")), 
+                  ~ case_when(
+                    . < 0.001 ~ format(., scientific = TRUE, digits = 2),
+                    TRUE ~ as.character(round(., 4))
+                  )))
+}
+```
+
+## Quality Control: Raw Ct Values
+
+```{r}
+
+# -------------------------------------
+# qPCR +/- T4 & TT3
+# -------------------------------------
+
+# Read T4 
+qPCR_T4 <- read_excel(paste0(file_path,"6_T4_T3_qPCR.xlsx"),
+                       range = cell_cols("A:I")) |>
+           mutate(across(where(is.character), tolower))
+
+# Read T3 
+qPCR_T3 <- read_excel(paste0(file_path,"6_T4_T3_qPCR.xlsx"),
+                       range = cell_cols("K:S")) |>
+           mutate(across(where(is.character), tolower))
+
+# -------------------------------------
+#  average Ct values for technical replicates
+# -------------------------------------
+process_one_qpcr_data <- function(data) {
+  # Calculating average Ct values for technical replicates
+  summarised_data <- data %>%
+    mutate(gene = as.factor(gene)) %>% 
+    rowwise() %>%
+    mutate(mean_Ct = (ct_1 + ct_2) / 2) %>% 
+    ungroup()
+  
+  summarised_data
+  
+  # Plot average Ct values
+  ct_plot <- ggplot(summarised_data, aes(x = group, y = mean_Ct, colour = hpf)) +
+    geom_point() +
+    scale_color_gradientn(colors = contPalette, name = "early to late hpf") +
+    facet_wrap(~ gene, scales = "free")  +
+    custom_theme()
+ 
+  print(ct_plot)
+}
+
+Ct_T4 <- process_one_qpcr_data(qPCR_T4) 
+Ct_T3 <- process_one_qpcr_data(qPCR_T3)
+
+Ct_T4 |> head()
+Ct_T3 |> head()
+
+```
+
+```{r}
+#--------------------------------------------------------------------------------
+# confirm actin Ct values don't change with treatment/development
+#--------------------------------------------------------------------------------
+
+run_actin_qc <- function(input_df, label = "T4 / T3") {
+  df <- input_df$data 
+  
+  anova_rawCt_tbl <- df %>%
+    group_by(gene) %>%
+    nest() %>%
+    mutate(model  = map(data, ~ aov(mean_Ct ~ group * stage, data = .x)),
+           tidied = map(model, broom::tidy)) %>%
+    unnest(tidied) %>%
+    select(gene, term, df, sumsq, meansq, statistic, p.value) %>%
+    mutate(p.value = round(p.value, 6), significance = case_when(
+        p.value < 0.001 ~ "***",
+        p.value < 0.01  ~ "**",
+        p.value < 0.05  ~ "*",
+        TRUE            ~ "ns")
+        )
+  
+  actin_plot <- ggplot(df %>% filter(gene == "actin"),
+                       aes(x = group, y = mean_Ct, colour = hpf)) +
+                  geom_point(size = 2, alpha = 0.7) +
+                  scale_color_gradientn(colors = contPalette, name = "early to late hpf") +
+                  facet_wrap(~ gene, scales = "free_y") +
+                  custom_theme()
+  # print(actin_plot)
+
+  anova_rawCt_tbl %>%
+    format_pvalues() %>%
+    kable(digits  = 4, caption = paste0("Quality control: ANOVA raw Ct showing actin stability (", label, ")")) %>%
+    print() 
+  
+  list(anova = anova_rawCt_tbl,
+       plot  = actin_plot)
+}
+
+run_actin_qc(Ct_T4, label = "T4")
+run_actin_qc(Ct_T3, label = "T3")
+
+# actin: Non-significant effects - reference gene is stable both in T4 and T3
+
+  
+```
+
+## ΔCt Calculation
+
+```{r}
+
+# -------------------------------------
+#  ΔCt function
+# -------------------------------------
+
+# delta-Ct method: difference between  Ct of housekeeping gene and target gene
+process_two_qpcr_data <- function(summarised_data) {
+
+  # Rearranging the data
+  goi_data <- summarised_data %>% 
+    filter(gene != "actin") %>% 
+    dplyr::rename("goiMean_Ct" = "mean_Ct")
+  
+  ref_data <- summarised_data %>% 
+    filter(gene == "actin") %>% 
+    dplyr::rename("refMean_Ct" = "mean_Ct")
+  
+  # delta-Ct method: difference between Ct of HK gene and target gene
+  # RNA relative 2^delta-Ct
+  
+  delta_Ct <- left_join(goi_data, ref_data, by = c("group", "hpf", "stage", "bioRep")) %>% 
+    dplyr::rename(
+      gene_goi = gene.x,
+      goi_Ct = goiMean_Ct,
+      ref_Ct = refMean_Ct
+    ) %>% 
+    relocate(group, bioRep, everything()) %>% 
+    mutate(
+      delta_Ct = goi_Ct - ref_Ct, #delta-Ct method
+      mRNArel = 2^(-delta_Ct)  # relative mRNA
+    ) 
+  
+  # plot delta_Ct each sample
+  delta_ct_plot <-  ggplot(delta_Ct, aes(x = group, y = delta_Ct,colour = hpf)) +
+    geom_point() +
+    scale_color_gradientn(colors = contPalette, name = "early to late hpf") +
+    facet_wrap(~ gene_goi, scales = "free") +
+    labs(x = "", 
+         y = "ΔCt (Target Gene - Reference)") +
+    custom_theme()
+  
+  print(delta_ct_plot)
+  
+  delta_Ct
+  # return(delta_Ct)
+  
+}
+
+# Process both datasets using the same function
+delta_Ct_T4 <- process_two_qpcr_data(Ct_T4$data) 
+delta_Ct_T3 <- process_two_qpcr_data(Ct_T3$data)
+
+delta_Ct_T4
+```
+
+### Quick look
+
+```{r}
+#| fig-width: 16
+
+# -------------------------------------
+# Plotting Function 
+# -------------------------------------
+
+create_qpcr_plot <- function(input_data, treatment_color) {
+  # x-axis breaks and labels
+  x_breaks <- unique(input_data$hpf)
+  x_labels <- c("17.3 \n hatch","21.3 \n earSwim", "24.5 \n midSwim","27.5 \n latSwim", "29 \n attach")
+  
+  # y-axis breaks and labels
+  y_range <- range(input_data$mRNArel, na.rm = TRUE)
+  y_breaks <- round(10^(seq(log10(y_range[1]), log10(y_range[2]), length.out = 5)),4)
+  
+  ggplot(input_data, aes(x = hpf, y = mRNArel, 
+                         group = group, color = group, fill = group, shape = as.factor(bioRep))) +
+    # geom_point(alpha = 0.6, size = 3,shape = 16) +
+    geom_point(alpha = 0.6, size = 3) +
+    stat_summary(fun = mean, geom = "line", size = 1.5) +
+    stat_summary(fun.data = mean_se, geom = "ribbon", alpha = 0.2,color = NA ) +
+    scale_x_continuous(breaks = x_breaks, labels = x_labels) +
+    # scale_y_continuous(trans = "log10", breaks = y_breaks) +
+    scale_color_manual(values = c("grey78", treatment_color)) +
+    scale_fill_manual(values = c("grey78", treatment_color)) +
+    labs(x = "Developmental stage (hpf)", y = "mRNA expression") +
+    custom_theme() +
+    facet_wrap(~gene_goi, ncol = 3, scales = "free_y") +
+    theme(legend.position = "bottom") 
+}
+
+#  plots
+plot_t4 <- create_qpcr_plot(delta_Ct_T4, "#6baed6")  # Control=black, T4=blue
+plot_t3 <- create_qpcr_plot(delta_Ct_T3, "#c9a8e0")  # Control=black, T3=purple
+
+plot_t4
+plot_t3
+
+# ggsave("mRNA_expression_plot.pdf", final_plot, width = 12, height = 8, dpi = 300)
+  # Thr level go down over time in control but not with T4
+```
+
+# Statistical analysis
+
+```{r}
+# -------------------------------------
+# statistics on delta Ct 
+# -------------------------------------
+
+# this is to check each stage separatly ==> not needed
+# # wilcox_test
+# stat_results_T4 <- delta_Ct_T4 %>%
+#   group_by(gene_goi, stage) %>%
+#   wilcox_test(delta_Ct ~ group) %>%    # compare ΔCt between Control vs. T4
+#   add_significance() %>%
+#   adjust_pvalue(method = "fdr") %>%  # correct for multiple tests
+#   add_significance()
+# 
+# # pretty  table
+# stat_results_T4 %>%
+#   dplyr::select(gene_goi, stage, 
+#          p, p.adj, 
+#          p.signif, p.adj.signif) %>%
+#   knitr::kable(digits = 4)
+# 
+# stat_results_T3 <- delta_Ct_T3 |> 
+#   group_by(gene_goi, stage) %>%
+#   # adjust_pvalue(method = "bonferroni") %>%
+#   wilcox_test(delta_Ct ~ group) %>%    # compare ΔCt between Control vs. T4
+#   add_significance() %>%
+#   adjust_pvalue(method = "fdr") %>%  # correct for multiple tests
+#   add_significance()
+# 
+# # pretty  table
+# stat_results_T3 %>%
+#   dplyr::select(gene_goi, stage, 
+#          p, p.adj, 
+#          p.signif, p.adj.signif) %>%
+#   knitr::kable(digits = 4)
+```
+
+-   group: Does T4 treatment have an overall effect on expression?
+-   stage: Does expression vary by developmental stage?
+-   group:stage Does the effect of T4 change across stages?
+
+```{r}
+
+########
+# two-way ANOVA for each gene
+########
+
+# The group:stage interaction tests whether the effect of the drug (T4/T3) on gene expression changes depending on the developmental stage.
+# If the effect of T4/T3 is consistent across all stages → this interaction will not be significant.
+# If the effect of T4/T3 is stronger at some stages and weaker or absent at others → the interaction will be significant.
+
+
+run_anova_tukey <- function(delta_df) {
+  delta_df %>%
+    group_by(gene_goi) %>%
+    nest() %>%
+    mutate(
+      # two-way ANOVA per gene
+      anova_df = map(data, ~ aov(delta_Ct ~ group * stage, data = .x)),
+      anova_tidy = map(anova_df, broom::tidy),
+      
+      # Tukey post-hoc per gene (all terms)
+      tukey_df  = map(anova_df, TukeyHSD),
+      tukey_tidy = map(tukey_df, broom::tidy)
+    )
+}
+
+aov_tukey_T4 <- run_anova_tukey(delta_Ct_T4)
+aov_tukey_T3 <- run_anova_tukey(delta_Ct_T3)
+
+# anova is the first pass, they look ok so let directly move on to Tukey to see in which groups/stages is that effect?
+# aov_results_T4 <- aov_tukey_T4 %>%
+#   select(gene_goi, anova_tidy) %>%
+#   unnest(anova_tidy)
+# 
+# aov_results_T3 <- aov_tukey_T3 %>%
+#   select(gene_goi, anova_tidy) %>%
+#   unnest(anova_tidy)
+
+aov_tukey_results_T4 <- aov_tukey_T4 %>%
+  select(gene_goi, tukey_tidy) %>%
+  unnest(tukey_tidy)
+
+aov_tukey_results_T3 <- aov_tukey_T3 %>%
+  select(gene_goi, tukey_tidy) %>%
+  unnest(tukey_tidy)
+
+aov_tukey_results_T4 %>%
+  dplyr::select(-"null.value") %>%
+  filter(term %in% c("group", "stage")) %>% # no interaction term
+  format_pvalues() |> 
+  knitr::kable(caption = "T4: Tukey HSD Post-hoc Tests")
+
+aov_tukey_results_T3 %>%
+  dplyr::select(-"null.value") %>%
+  filter(term %in% c("group", "stage")) %>% # no interaction term
+  format_pvalues() |> 
+  knitr::kable(caption = "T3: Tukey HSD Post-hoc Tests")
+
+```
+
+### Panel plot
+
+```{r}
+#| fig-height: 16
+#| fig-width: 18
+
+# ---------------------------------------------------
+# Plotting same y-axes ~gene & shared legend 
+# ---------------------------------------------------
+
+# --- per-gene global y-limits across T4 + T3 ---
+gene_ylimits <-  bind_rows(delta_Ct_T4 %>% mutate(treatment = "T4"),    
+                           # ---- Combine T4 and T3 data ----
+                           delta_Ct_T3 %>% mutate(treatment = "T3")) |> 
+  group_by(gene_goi) %>%
+  summarise(
+    ymin = min(mRNArel, na.rm = TRUE),
+    ymax = max(mRNArel, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+print(gene_ylimits)
+
+# shared palette & order 
+pal_vals <- c("Control" = "grey78", "T4" = "#6baed6", "T3" = "#c9a8e0")
+brks     <- c("Control", "T4", "T3")
+
+# ---- plot function ---
+create_qpcr_plot <- function(input_data, treatment_label) {
+  
+  # current gene (one per loop)
+  current_gene <- unique(input_data$gene_goi)
+  
+  # x-axis breaks and labels
+  x_breaks <- unique(input_data$hpf)
+  x_labels <- c("17.3 \n hatch","21.3 \n earSwim", "24.5 \n midSwim","27.5 \n latSwim", "29 \n attach")
+  
+  # gene-wise y-limits
+  y_limits <- gene_ylimits %>%
+    filter(gene_goi == current_gene) %>%
+    dplyr::select(ymin, ymax) %>%
+    as.list()
+  
+  # new column so i can collapse the legend
+  input_data <- input_data %>%
+    mutate(group2 = if_else(group == "control", "Control", treatment_label))
+  
+
+  ggplot(input_data, aes(hpf, mRNArel, color = group2, fill = group2)) +
+    geom_point(alpha = 0.6, size = 3, show.legend = TRUE) +
+
+    stat_summary(fun = mean, geom = "line", size = 1.2, show.legend = FALSE) +      # <- position = position_jitter(width = 0.1, height = 0)
+    stat_summary(fun.data = mean_se, geom = "ribbon", alpha = 0.2, color = NA,show.legend = FALSE) + 
+
+    scale_x_continuous(breaks = x_breaks, labels = x_labels) +
+    scale_color_manual(values = pal_vals, breaks = brks, limits = brks, name = NULL) +
+    scale_fill_manual(values  = pal_vals, breaks = brks, limits = brks, name = NULL) +
+    coord_cartesian(ylim = c(y_limits$ymin, y_limits$ymax)) +
+    labs(x = "Developmental stage (hpf)", y = "mRNA expression") +
+    custom_theme() +
+    theme(axis.title.x = element_blank()) +
+    ggtitle(current_gene)
+}
+
+# ----  per-gene panels for T4 ----
+genes <- union(delta_Ct_T4$gene_goi, delta_Ct_T3$gene_goi) %>% unique()
+# genes <- unique(delta_Ct_T4$gene_goi) #  unique genes
+
+plot_list <- map(genes, function(gene) {
+  # filter + individual plot
+  t4 <- delta_Ct_T4 %>% filter(gene_goi == gene) %>% create_qpcr_plot("T4")
+  t3 <- delta_Ct_T3 %>% filter(gene_goi == gene) %>% create_qpcr_plot("T3")
+  t4 / t3   # stack T4 over T3
+})
+
+
+# ---- Arrange all genes in a grid and collect a single legend ----
+final_plot <- wrap_plots(plot_list, ncol = 3) +
+  plot_layout(guides = "collect") & 
+  theme(legend.position = "bottom",
+        legend.text = element_text(size = 25),
+        plot.title = element_text(hjust = 0.5, size = 20, face = "bold")) &
+  guides(
+    color = guide_legend(title = NULL, override.aes = list(shape = 22, size = 12), nrow = 1),
+    fill  = guide_legend(title = NULL, nrow = 1)
+  ) 
+final_plot 
+
+```
+
+```{r}
+
+#save plot
+
+
+width_in <- 40 
+aspect_ratio <- 3/4   
+height_in <- width_in * aspect_ratio
+
+width_mm <- 4*width_in / 25.4
+height_mm <- 4*height_in / 25.4
+
+
+CairoPDF(file.path(file_path,  "figSX_rtqPCR_T4&T3.pdf"), width = width_mm, height = height_mm)
+print(final_plot)
+dev.off()
+
+
+# Using aspect ratio instead of explicit dimensions
+cowplot::save_plot(
+  plot = final_plot,
+  base_height = height_in,  # or any base height
+  base_asp = width_in / height_in,  # width:height ratio
+  file = file.path(file_path, "figSX_rtqPCR_T4&T3_1.pdf")
+)
+
+cowplot::save_plot(plot = final_plot,
+                   base_height = 0.9*3.71,
+                   base_asp = 0.9*1.618,
+                   file = file.path(file_path,'figSX_rtqPCR_T4&T3_2.pdf'))
+
+
+cowplot::save_plot(plot = final_plot,
+                   base_height = 1.9*3.71,
+                   base_asp = 0.9*1.618,
+                   file = file.path(file_path,'figSX_rtqPCR_T4&T3_3.pdf'))
+
+```

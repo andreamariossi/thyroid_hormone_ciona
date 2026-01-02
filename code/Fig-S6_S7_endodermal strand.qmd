@@ -1,0 +1,641 @@
+---
+title: "Endodermal strand experiments"
+author: "Andrea Mariossi"
+format: 
+  html:
+    code-fold: false
+    embed-resources: true 
+engine: knitr
+editor: visual
+grid: 
+  sidebar-width: 100px
+  body-width: 2000px
+  margin-width: 100px
+  gutter-width: 3.5rem
+execute:
+  fig-align: center
+  fig-format: png
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r set up}
+rm(list = ls())
+knitr::opts_chunk$set(
+  echo = TRUE,
+  fig.width = 12,
+  fig.height = 10,
+  fig.align = "center",
+  out.width = "70%",
+  column = "page"
+)
+
+# Package loading
+suppressPackageStartupMessages({
+  # Data manipulation & file import
+  library(tidyverse)
+  library(readxl)
+  library(paletteer)
+  library(rstatix)
+  library(ggpubr)
+  library(knitr)
+  library(Cairo)
+  library(lme4)
+  library(lmerTest)
+  library(emmeans)
+  library(kableExtra)
+  library(patchwork)
+  library(gganimate)
+  library(gifski)  
+  library(transformr)
+  })
+
+options(gganimate.renderer = gifski_renderer())
+
+```
+
+```{r function}
+# ===== path =====
+file_path <- "/Users/andrea/Princeton Dropbox/Andrea Mariossi/4.paper_archive/2025_thyroid_pathway_&_metamorphosis/3.1.ScienceAdvances_submission_rev/tables/"
+
+# ===== theme & style =====
+custom_theme <- function() {
+  theme(
+    axis.ticks = element_line(linewidth = 0.5),
+    axis.ticks.length = unit(0.09, "cm"),
+    legend.key.height = unit(20, "pt"),
+    axis.line = element_blank(),
+    panel.border = element_rect(colour = "black", fill = NA, linewidth = 1),
+    panel.background = element_blank(),
+    plot.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    legend.background = element_blank(),
+    legend.box.background = element_blank(),
+    legend.key = element_blank(),
+    strip.background = element_blank(),
+  )
+}
+
+# ===== set theme =====
+theme_set(theme_pubr(base_size = 13,
+                     base_family = "Helvetica") + custom_theme())
+
+# ===== extra bits =====
+no_legend <- theme(legend.position = "none")
+axis_text_45 <- theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+
+# ===== color palette =====
+# panel_a_colors <- c("#1F28A2", "#00AAAB", "#E88471FF", "#C5A341", "#7D0112")
+# panel_b_colors <- c("#1F28A2", "#9467bd", "#56B4E9")
+
+panel_a_colors <- c("#636363", "#00AAAB", "#1970DB", "#C5A341", "#7D0112")
+panel_a_b_colors <- c("#636363", "#00AAAB", "#1970DB", "#E88471FF", "#7D0112")
+
+panel_a_colors <- c("#636363", "#00AAAB", "#1970DB")
+panel_b_colors <- c("#636363", "#E88471FF", "#7D0112")
+panel_c_colors <- c("#636363", "#1F28A2", "#9467bd")
+
+stage_order <- c("earTII", "midTII", "latTII", "latTIII", "larva")
+
+# ===== pretty p-values for kable =====
+format_pvalues <- function(df) {
+  df %>%
+    mutate(across(any_of(c("p.value", "p.value.x", "p.value.y", "adj.p.value")), 
+                  ~ case_when(
+                    . < 0.001 ~ format(., scientific = TRUE, digits = 2),
+                    TRUE ~ as.character(round(., 4))
+                  )))
+}
+```
+
+```{r load}
+# Load data
+endo_strand <- read_excel(paste0(file_path,"11_endodermal_strand_migration.xlsx"))
+
+
+# Process data function
+process_panel_data <- function(data, panel_name) {
+  # First filter and select
+  result <- data |> 
+    filter(panel == panel_name) |> 
+    dplyr::select(-panel)
+  
+  # Conditionally remove first row for panel_b
+  if (panel_name == "panel_b") {
+    result <- result |> slice(-1)
+  }
+  
+  # Continue with the rest of the processing
+  result |> 
+    pivot_longer(-c(1, 2), names_to = "counts", values_to = "n") |> 
+    mutate(n = as.numeric(n)) |>
+    separate(counts, into = c("counts", "timepoint"), sep = "_") |> 
+    pivot_wider(names_from = counts, values_from = n) |> 
+    mutate(percentage = nCount / total) |>  
+    Rmisc::summarySE(measurevar = "percentage", 
+                     groupvars = c("timepoint", "Group")) |> 
+    mutate(timepoint_num = as.numeric(str_remove(timepoint, "hpf")))
+}
+
+# tidy the data
+panel_a_b_data <- process_panel_data(endo_strand, "panel_a")
+panel_a_b_data |> kable()
+
+panel_c_data <- process_panel_data(endo_strand, "panel_b")
+panel_c_data |> kable()
+
+
+```
+
+## embryos number
+
+```{r}
+# =========================
+# Embryo numbers per timepoint 
+# =========================
+# Combined version with panel identifier in each line
+get_embryo_summary_with_panel <- function(data, panel_filter) {
+  df_panel <- data |>
+    dplyr::filter(panel == panel_filter) |>
+    dplyr::select(-panel) |> 
+    dplyr::select(Group, starts_with("total_")) |>
+    tidyr::pivot_longer(
+      cols = starts_with("total_"),
+      names_to = "col",
+      values_to = "total"
+    ) |>
+    dplyr::mutate(
+      total = as.numeric(total),
+      timepoint = stringr::str_remove(col, "^total_"),
+      timepoint_num = as.numeric(stringr::str_remove(timepoint, "hpf"))
+    )
+  
+  # sum embryos per Group x timepoint
+  embryo_n <- df_panel |>
+    dplyr::group_by(Group, timepoint, timepoint_num) |>
+    dplyr::summarise(total = sum(total, na.rm = TRUE), .groups = "drop") |>
+    dplyr::mutate(label = paste0("n=", total)) |>
+    dplyr::arrange(timepoint_num, Group)
+  
+  # lines like: "Panel A - 17.5hpf: control n=..., TR n=..., TR_WRPW n=..."
+  embryo_lines <- embryo_n |>
+    dplyr::group_by(timepoint, timepoint_num) |>
+    dplyr::summarise(
+      line = paste0(panel_filter, " - ", timepoint, ": ", 
+                   paste0(Group, " ", label, collapse = ", ")),
+      .groups = "drop"
+    ) |>
+    dplyr::arrange(timepoint_num) |>
+    dplyr::distinct(timepoint, timepoint_num, line) |>
+    dplyr::arrange(timepoint_num)
+  
+  return(embryo_lines)
+}
+
+# Get all summaries
+all_summaries <- purrr::map_df(
+  c("panel_a", "panel_b", "panel_c"),
+  ~ get_embryo_summary_with_panel(endo_strand, .x)
+)
+
+# Print all at once
+cat(paste0(all_summaries$line, "\n"))
+
+
+```
+
+## fig_S6-endodermal-strand-migration Nkx2.1 reporter
+
+```{r}
+#| fig-height: 7
+#| fig-width: 18
+
+# plot function
+plot_percentage_data <- function(data, colors, x_var, group_breaks = NULL, group_labels = NULL,legend_position = NULL) {
+
+  p <- ggplot(data, aes(x = {{ x_var }}, y = percentage,color = Group, group = Group)) +
+    geom_line(size = 1.5) +
+    geom_ribbon(aes(ymin = percentage - se,
+                    ymax = percentage + se,
+                    fill = Group),
+                linetype = 0,alpha = 0.4) +
+    geom_point(size = 3) +
+    custom_theme() +
+    labs(y = "% of tail regression progress") +
+    scale_color_manual(values = colors,breaks = group_breaks,labels = group_labels) +
+    scale_fill_manual(values = colors,breaks = group_breaks,labels = group_labels) +
+    scale_y_continuous(labels = scales::percent_format())
+  
+  if (!is.null(legend_position)) {
+    p <- p + theme(legend.position = legend_position)
+  }
+  
+  p
+}
+
+# Panel A plots
+
+panel_a_breaks <- c("control", "TR", "TR_WRPW")
+panel_a_labels <- c("Control", "TR", "TR::WRPW")
+
+plot_tr <- plot_percentage_data(
+  panel_a_b_data |> filter(str_detect(Group, "control|TR")),
+  panel_a_colors,
+  # x_var = as.factor(timepoint),
+  x_var = timepoint_num,
+  group_breaks  = panel_a_breaks,
+  group_labels  = panel_a_labels,
+  legend_position = c(0.2, 0.9)) +
+  labs(x = "Hours post fertilization")
+  # scale_x_continuous(
+  #   breaks = unique(panel_a_data$timepoint_num),
+  #   labels = unique(panel_a_data$timepoint)
+  # )
+
+
+# Panel B plots
+panel_b_breaks <- c("control", "hox10", "hox10_WRPW")
+panel_b_labels <- c("Control", "Hox10", "Hox10::WRPW")
+plot_hox10 <- plot_percentage_data(
+  panel_a_b_data |> filter(str_detect(Group, "control|hox10")),
+  panel_b_colors,
+  # x_var = as.factor(timepoint),
+  x_var = timepoint_num,
+  group_breaks  = panel_b_breaks,
+  group_labels  = panel_b_labels,
+  legend_position = c(0.2, 0.9)) +
+  labs(x = "Hours post fertilization")
+  # scale_x_continuous(
+  #   breaks = unique(panel_a_data$timepoint_num),
+  #   labels = unique(panel_a_data$timepoint)
+  # )
+
+# Panel C plots
+panel_c_breaks <- c("control", "hox10_WRPW_TR", "TR_WRPW_hox10")
+panel_c_labels <- c("Control", "Hox10::WRPW & TR", "TR::WRPW & Hox10")
+
+c <- plot_percentage_data(
+  panel_c_data,
+  panel_c_colors,
+  x_var = timepoint_num,
+  # x_var = as.factor(timepoint),
+  group_breaks = panel_c_breaks,
+  group_labels= panel_c_labels,
+  legend_position = c(0.2, 0.9)) +
+  labs(x = "Hours post fertilization") 
+
+# Combine with equal sizing
+final_plot <- (plot_tr + plot_hox10 + c ) +
+  plot_layout(nrow = 1, widths = c(1, 1, 1)) & 
+  plot_annotation(tag_levels = 'A') &
+  theme(plot.tag = element_text(face = "bold"))
+
+final_plot
+
+# Save
+ggsave(file.path(file_path,"figSX_endodermal strand_00.pdf"), final_plot, 
+       width = 15, height = 5, dpi = 300)
+
+
+width_in <- 40 
+aspect_ratio <- 3/4   
+height_in <- width_in * aspect_ratio
+
+width_mm <- 4*width_in / 25.4
+height_mm <- 4*height_in / 25.4
+
+
+CairoPDF(file.path(file_path,  "figSX_endodermal strand_01.pdf"), width = width_mm, height = height_mm)
+print(final_plot)
+dev.off()
+
+
+# Using aspect ratio instead of explicit dimensions
+cowplot::save_plot(
+  plot = final_plot,
+  base_height = height_in,  # or any base height
+  base_asp = width_in / height_in,  # width:height ratio
+  file = file.path(file_path, "figSX_endodermal strand_01.pdf")
+)
+
+cowplot::save_plot(plot = final_plot,
+                   base_height = 0.9*3.71,
+                   base_asp = 0.9*1.618,
+                   file = file.path(file_path,'figSX_endodermal strand_02.pdf'))
+
+cowplot::save_plot(plot = final_plot,
+                   base_height = 1.9*3.71,
+                   base_asp = 1.9*1.618,
+                   file = file.path(file_path,'figSX_endodermal strand_03.pdf'))
+```
+
+### gif animation
+
+all condition togheter
+
+```{r}
+#| message: false
+#| warning: false
+#| fig-format: png
+
+#----------------------------------------------------
+# for ppt animation - time stage pop up
+#----------------------------------------------------
+
+panel_a_b_colors <- c("#636363", "#E88471FF", "#7D0112","#00AAAB", "#1970DB")
+panel_a_b_breaks <- c("control", "hox10", "hox10_WRPW", "TR", "TR_WRPW")
+panel_a_b_labels <- c("Control", "Hox10", "Hox10::WRPW", "TR", "TR::WRPW")
+# gif_plot <- plot_percentage_data(
+#   panel_a_b_data,
+#   panel_a_b_colors,
+#   x_var = timepoint_num,
+#   # x_var = as.factor(timepoint),
+#   group_breaks  = panel_a_b_breaks,
+#   group_labels  = panel_a_b_labels,
+#   legend_position = c(0.2, 0.9)) +
+#   labs(x = "Hours post fertilization")
+#   
+# 
+# animated_overTime <- gif_plot +
+#   transition_reveal(timepoint_num) +
+#   # theme(legend.position = "bottom")
+#  theme(legend.position = c(0.2, 0.8)) +
+#   theme(
+#     legend.text = element_text(size = 20),  # Adjust legend item label size
+#     legend.title = element_text(size = 16, face = "bold") # Adjust legend title size and style
+#   )
+# 
+# animated_overTime
+
+#----------------------------------------------------
+# for ppt animation - condtition pop up
+#----------------------------------------------------
+
+# animated_p
+# Save the animation
+#anim <- animate(animated_overTime, nframes = 200, width = 800, height = 600, fps = 10)
+#anim_save("tail_regression_by_treatment_stay.gif", anim)
+
+# #individual timeseries
+# 
+# animated_overTime2 <- gif_plot +
+#   transition_states(
+#     timepoint_num,
+#     transition_length = 4,
+#     state_length = 10
+#   ) +
+#   shadow_mark() +
+#   enter_fade() +
+#   # exit_fade() +
+#   theme(legend.position = "bottom") +
+#   labs(subtitle = 'Time: {closest_state} hpf')
+# animated_overTime
+# 
+# animated_p <- gif_plot +
+#   transition_states(
+#     Group,
+#     transition_length = 2,
+#     state_length = 1
+#   ) +
+#   shadow_mark() +
+#   enter_fade() +
+#   exit_fade() +
+#   theme(legend.position = "bottom") +
+#   labs(subtitle = 'Group: {closest_state}') +
+#   theme_pubr(base_size = 17)
+
+```
+
+### gif: split panels
+
+```{r}
+
+#----------------------------------------------------
+# for ppt animation 
+#----------------------------------------------------
+
+# i need to duplicate the control rows to make it works in gganimate side by side
+# TR-side data
+panel_tr <- panel_a_b_data |>
+  filter(Group %in% c("control", "TR", "TR_WRPW")) |>
+  mutate(panel = "TR panel")
+
+# Hox10-side data
+panel_hox <- panel_a_b_data |>
+  filter(Group %in% c("control", "hox10", "hox10_WRPW")) |>
+  mutate(panel = "Hox10 panel")
+
+# Combine for faceting
+panel_anim_data <- bind_rows(panel_hox,panel_tr)
+
+anim_base <- plot_percentage_data(
+  panel_anim_data,
+  panel_a_b_colors,
+  x_var = timepoint_num,
+  # x_var = as.factor(timepoint),
+  group_breaks  = panel_a_b_breaks,
+  group_labels  = panel_a_b_labels,
+  legend_position = c(0.2, 0.9)) +
+  labs(x = "Hours post fertilization") +
+  facet_wrap(~ panel, nrow = 1) +
+  theme(
+    legend.position = "bottom",
+    legend.text  = element_text(size = 16),
+    legend.title = element_text(size = 16, face = "bold")
+  )
+
+animated_side <- anim_base +
+  transition_reveal(timepoint_num)
+
+# animated_side
+
+#----------------------
+# save gif split panels
+#----------------------
+
+# anim_two_panel <- animate(
+#   animated_side,
+#   nframes = 120,  # adjust as you like
+#   fps     = 10,
+#   width   = 1000,
+#   height  = 500
+# )
+
+# anim_two_panel
+# anim_save("tail_regression_TR_vs_Hox10_twopanel.gif", anim_two_panel)
+
+```
+
+{
+
+```{r}
+
+#| label: fig-animation
+#| fig-cap: "Animation of tail regression"
+#| fig-alt: "Animation showing tail regression over time"
+#| echo: false
+
+knitr::include_graphics("/Users/andrea/tail_regression_TR_vs_Hox10_twopanel.gif")
+```
+
+r} #\| label: fig-animation #\| fig-cap: "Animation of tail regression" #\| fig-alt: "Animation showing tail regression over time" #\| echo: false
+
+knitr::include_graphics("output/animation.gif")
+
+## fig_S7 - endodermal-strand-migration Zip2 reporter
+
+```{r}
+
+# =========================
+# Load data
+# =========================
+endo_strand_zip <- read_excel(paste0(file_path, "11_endodermal_strand_migration-zip2.xlsx"))
+
+# =========================
+# Tidy + summarize (mean + se by Group x timepoint)
+# =========================
+endo_summary_zip <- endo_strand_zip |>
+  pivot_longer(
+    cols = -c(Group, Replicate),
+    names_to = "metric_time",
+    values_to = "n"
+  ) |>
+  mutate(n = as.numeric(n)) |>
+  separate(metric_time, into = c("metric", "timepoint"), sep = "_") |>
+  pivot_wider(names_from = "metric", values_from = "n") |>
+  mutate(percentage = nCount / total) |>
+  Rmisc::summarySE(
+    measurevar = "percentage",
+    groupvars  = c("timepoint", "Group")
+  ) |>
+  mutate(
+    timepoint_num = as.numeric(str_remove(timepoint, "hpf"))
+  )
+
+endo_summary_zip |> kable()
+
+# =========================
+# Embryo numbers per timepoint 
+# =========================
+df <- endo_strand_zip |>
+  select(Group, starts_with("total_")) |>
+  pivot_longer(
+    cols = starts_with("total_"),
+    names_to = "col",
+    values_to = "total"
+  ) |>
+  mutate(
+    total = as.numeric(total),
+    timepoint = str_remove(col, "^total_"),
+    timepoint_num = as.numeric(str_remove(timepoint, "hpf"))
+  ) |> 
+  mutate(
+    Group = factor(Group, levels = c("control", "TR", "TR_WRPW"))
+  )
+
+# sum embryos per Group x timepoint
+embryo_n <- df |>
+  dplyr::group_by(Group, timepoint, timepoint_num) |>
+  dplyr::summarise(total = sum(total, na.rm = TRUE), .groups = "drop") |>
+  dplyr::mutate(label = paste0("n=", total)) |>
+  dplyr::arrange(timepoint_num, Group)
+
+# lines like: "17.5hpf: control n=..., TR n=..., TR_WRPW n=..."
+embryo_lines <- embryo_n |>
+  dplyr::group_by(timepoint, timepoint_num) |>
+  dplyr::summarise(
+    line = paste0(timepoint, ": ", paste0(Group, " ", label, collapse = ", ")),
+    .groups = "drop"
+  ) |>
+  dplyr::arrange(timepoint_num) |>
+  dplyr::distinct(timepoint, timepoint_num, line) |>
+  dplyr::arrange(timepoint_num)
+
+cat(paste0(embryo_lines$line, "\n"))
+
+# =========================
+# Plot
+# =========================
+
+# 1) make a 1-row-per-timepoint data frame for the text
+embryo_lines_plot <- embryo_lines |>
+  dplyr::distinct(timepoint, timepoint_num, line) |>
+  dplyr::mutate( #remove the "17.5hpf: " prefix
+                 line = stringr::str_remove(line, "^.*?:\\s*"),
+                 # put each group on its own line
+                 line = stringr::str_replace_all(line, ",\\s*", "\n")) |>
+  dplyr::arrange(timepoint_num)
+
+# 2) add to your existing ggplot (replace `p` with your plot object if you have one)
+zip_plot <- ggplot(endo_summary_zip, aes(x = timepoint_num, y = percentage, color = Group, group = Group)) +
+  geom_line(linewidth = 1.5) +
+  geom_ribbon(
+    aes(ymin = percentage - se, ymax = percentage + se, fill = Group),
+    alpha = 0.4, colour = NA
+  ) +
+  geom_point(size = 3) +
+  # add the lines at the bottom (one per timepoint)
+  geom_text(
+    data = embryo_lines_plot,
+    aes(x = timepoint_num, y = -0.04, label = line),
+    inherit.aes = FALSE,
+    size = 3,
+    lineheight = 0.95
+  ) +
+  custom_theme() +
+  labs(
+    x = "Hours post fertilization",
+    y = "% of tail regression progress"
+  ) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  scale_color_manual(values = panel_a_colors) +
+  scale_fill_manual(values = panel_a_colors) +
+  coord_cartesian(ylim = c(-0.10, 1), clip = "off") +
+  theme(
+    legend.position = c(0.2, 0.9),
+    plot.margin = margin(5.5, 5.5, 30, 5.5)  # extra bottom space for text
+  )
+
+zip_plot
+
+
+##
+
+# Save
+ggsave(file.path(file_path,"figSX_ezip2.pdf"), zip_plot, 
+       width = 7, height = 7, dpi = 300)
+
+
+width_in <- 40 
+aspect_ratio <- 3/4   
+height_in <- width_in * aspect_ratio
+
+width_mm <- 4*width_in / 25.4
+height_mm <- 4*height_in / 25.4
+
+
+CairoPDF(file.path(file_path,  "figSX_endodermal strand_zip_01.pdf"), width = width_mm, height = height_mm)
+print(zip_plot)
+dev.off()
+
+
+# Using aspect ratio instead of explicit dimensions
+cowplot::save_plot(
+  plot = final_plot,
+  base_height = height_in,  # or any base height
+  base_asp = width_in / height_in,  # width:height ratio
+  file = file.path(file_path, "figSX_endodermal strand_zip_01.pdf")
+)
+
+cowplot::save_plot(plot = final_plot,
+                   base_height = 0.9*3.71,
+                   base_asp = 0.9*1.618,
+                   file = file.path(file_path,'figSX_endodermal strand_zip_02.pdf'))
+
+cowplot::save_plot(plot = final_plot,
+                   base_height = 1.9*3.71,
+                   base_asp = 1.9*1.618,
+                   file = file.path(file_path,'figSX_endodermal strand_zip_03.pdf'))
+
+```
