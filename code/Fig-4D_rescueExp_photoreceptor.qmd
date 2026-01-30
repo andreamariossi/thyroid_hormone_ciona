@@ -1,0 +1,843 @@
+---
+title: "Fig-4D_rescueExp_photoreceptor"
+author: "Andrea Mariossi"
+
+format:
+  html:
+    embed-resources: true
+    toc: true
+    toc-location: left
+    toc-depth: 5
+    code-fold: false
+    code-line-numbers: true
+    page-layout: article
+    grid:
+      sidebar-width: 100px
+      body-width: 2000px
+      margin-width: 100px
+      gutter-width: 3.5rem
+
+execute:
+  echo: true
+  warning: false
+  message: true
+
+fig-width: 18
+fig-height: 10
+fig-align: center
+fig-format: png
+out-width: "90%"
+
+editor_options:
+  chunk_output_type: inline
+---
+
+# Photoreceptor Overexpression: Opsin1 & Opsin2 & Thr
+
+For each biological replicate, embryos were dissected from a pooled parent set of 4–5 wild caught adults. Following fertilization, embryos were electroporated across four distinct experimental groups:
+
+-   **Control**: Scrambled sgRNA.
+
+-   **Knockdown**: sgRNA targeting *Thr*.
+
+-   **Rescue (20µg)**: sgRNA targeting *Thr* co-electroporated with 20µg *Opsin2* plasmid.
+
+-   **Rescue (40µg)**: sgRNA targeting *Thr* co-electroporated with 40µg *Opsin2* plasmid.
+
+Larvae were cultured until reaching the settlement stage, at which point they were fixed. Attachment success was quantified as a binary outcome (Yes/No). The assay utilized a standardized "swirl test," where attachment was defined as the larva's ability to
+remain adhered to the petri dish bottom while the water was swirled. Each petri dish contained approximately 40–60 embryos. The specific sample size per dish varied due to the volumetric transfer of embryos from the electroporation cuvettes via pipetting.
+The entire experimental workflow was repeated across four independent biological runs on different days, with each condition represented in every run.
+
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+-   **Inputs** come either from my local folder or from the repository’s folder (when downloaded from GitHub).
+-   **Outputs** of GitHub are written to a new local folder named `output_rerun/`
+
+## Setup
+
+```{r setup}
+#| include: false
+
+rm(list = ls())
+
+# ---- packages ----
+suppressPackageStartupMessages({
+  library(here)
+  library(tidyverse)
+  library(readxl)
+  library(paletteer)
+  library(rstatix)
+  library(ggpubr)
+  library(knitr)
+  library(Cairo)
+  library(lme4)
+  library(lmerTest)
+  library(emmeans)
+  library(kableExtra)
+  library(patchwork)
+  library(binom)
+})
+```
+
+## Configuration
+
+```{r config}
+# ---- configuration ----
+pick_pipeline <- "local"  # "local" or "github"
+
+# ---- my paths (inputs+outputs) ----
+file_path <- "/Users/andrea/Library/CloudStorage/GoogleDrive-andrea.mariossi@gmail.com/My Drive/4.paper_archive/2025_thyroid_pathway_&_metamorphosis/04.SciAdv_rev/source_data"
+out_dir   <- file.path(file_path, "output_rerun")
+
+# ---- github repo paths ----
+repo_dir <- here()
+
+# fallback: check if repo exists in Downloads folder
+if (!dir.exists(file.path(repo_dir, "data"))) {
+  repo_dir_try <- path.expand("~/Downloads/thyroid_hormone_ciona-main")
+  if (dir.exists(file.path(repo_dir_try, "data"))) {
+    repo_dir <- repo_dir_try
+  }
+}
+
+# ---- switch ----
+if (pick_pipeline == "local") {
+  data_dir <- file_path
+  SAVE_OUTPUTS <- TRUE
+  dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+  opath <- function(...) file.path(out_dir, ...)
+  
+} else if (pick_pipeline == "github") {
+  data_dir <- file.path(repo_dir, "data")
+  stopifnot(dir.exists(data_dir))
+  
+  SAVE_OUTPUTS <- TRUE
+  out_dir <- file.path(repo_dir, "output_rerun")
+  dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+  opath <- function(...) file.path(out_dir, ...)
+  
+} else {
+  stop("pick_pipeline must be either 'local' or 'github'")
+}
+
+dpath <- function(...) file.path(data_dir, ...)
+
+message("Pipeline: ", pick_pipeline)
+message("Data dir (inputs): ", data_dir)
+message("Outputs enabled: ", SAVE_OUTPUTS)
+if (SAVE_OUTPUTS) message("Outputs dir: ", out_dir)
+```
+
+## Theme & Style
+
+```{r theme}
+# ---- theme & style ----
+custom_theme <- function() {
+  theme(
+    axis.ticks = element_line(linewidth = 0.5),
+    axis.ticks.length = unit(0.09, "cm"),
+    legend.key.height = unit(20, "pt"),
+    axis.line = element_blank(),
+    panel.border = element_rect(colour = "black", fill = NA, linewidth = 1),
+    panel.background = element_blank(),
+    plot.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    legend.background = element_blank(),
+    legend.box.background = element_blank(),
+    legend.key = element_blank(),
+    strip.background = element_blank()
+  )
+}
+
+theme_set(theme_pubr(base_size = 13, base_family = "Helvetica") + custom_theme())
+
+no_legend <- theme(legend.position = "none")
+axis_text_45 <- theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+
+# ----extra ----
+stage_order <- c("earTII", "midTII", "latTII", "latTIII", "larva")
+panel_a_colors <- c("#636363", "#00AAAB", "#1970DB")
+
+# ---- pretty p-values for kable ----
+format_pvalues <- function(df) {
+  df %>%
+    mutate(across(
+      any_of(c("p.value", "p.value.x", "p.value.y", "adj.p.value")),
+      ~ case_when(
+        . < 0.001 ~ format(., scientific = TRUE, digits = 2),
+        TRUE ~ as.character(round(., 4))
+      )
+    ))
+}
+```
+
+## Load Data
+
+### Photoreceptors Thr KD & rescue with Opsin2 using Opsin1 enhancer
+
+**Key Results:**
+
+-   sgRNA_Thr shows reduced attachment compared to control
+-   sgThr_opsin2_20ug shows increased attachment compared to control
+-   40μg opsin2 cDNA shows even stronger effects
+
+```{r load_data}
+rescue_file <- dpath("13_photoreceptor_CRISPR_rescue.xlsx")
+stopifnot(file.exists(rescue_file))
+
+# read and preprocess data
+opsn1_cas_rescue.df <- read_excel(rescue_file) %>%
+  slice(1:17) |> 
+  drop_na()
+
+# 'lacz' as the reference level
+opsn1_cas_rescue.df$condition <- factor(opsn1_cas_rescue.df$condition, 
+                                        levels = c("sgRNA_scramble", "sgRNA_thr", "sgThr_opsin2_20ug"))
+
+# QC number
+sample_summary <- opsn1_cas_rescue.df %>%
+  group_by(condition, bioRep) %>%
+  summarise(n_larvae = sum(attached_larvae + swimming_larvae),
+            n_attached = sum(attached_larvae),.groups = "drop") |> 
+  group_by(condition) %>%
+  summarise(
+    n_replicates = n(),
+    total_larvae = sum(n_larvae),
+    min_larvae_per_rep = min(n_larvae),
+    max_larvae_per_rep = max(n_larvae)
+  )
+
+sample_summary %>%
+  kable(caption = "Per-condition summary") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+# percentages per replicate
+opsn1_cas_rescue.tidy <- opsn1_cas_rescue.df %>%
+  mutate(total_larvae = swimming_larvae + attached_larvae) %>%
+  pivot_longer(
+    cols = c(attached_larvae, swimming_larvae),
+    names_to = "status",
+    values_to = "count"
+  ) %>%
+  group_by(condition, bioRep) %>%
+  mutate(percent = round(count * 100 / sum(count), 1)) %>%  # % per replicate
+  ungroup()
+
+opsn1_cas_rescue.tidy %>%
+  kable(caption = "Per-replicate percentages") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+# summarize per condition
+opsn1_cas_rescue_condition.tidy <- opsn1_cas_rescue.df %>%
+  mutate(total_larvae = swimming_larvae + attached_larvae) %>%
+  group_by(condition) %>%
+  summarise(
+    attached = sum(attached_larvae),
+    not_attached = sum(swimming_larvae),
+    total = sum(total_larvae)
+  ) %>%
+  pivot_longer(
+    cols = c(attached, not_attached),
+    names_to = "status",
+    values_to = "count"
+  ) %>%
+  mutate(percent = count / total * 100)
+
+opsn1_cas_rescue_condition.tidy %>%
+  kable(caption = "Per-condition summary") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+# summary data: mean and SE for each segment
+opsn1_cas_rescue_summary.df <- opsn1_cas_rescue.tidy %>%
+  filter(condition != "sgThr_opsin2_40ug") %>%
+  group_by(condition, status) %>%
+  summarise(
+    mean_percent = mean(percent),
+    se = sd(percent) / sqrt(n()),
+    .groups = "drop"
+  ) %>%
+  arrange(condition, status) %>%
+  # calculate cumulative y-position for error bars
+  group_by(condition) %>%
+  arrange(condition, desc(status)) %>%  # stacking order
+  mutate(
+    y_cumulative = cumsum(mean_percent),  # top of each segment
+    y_start = y_cumulative - mean_percent  # bottom of each segment
+  )
+
+opsn1_cas_rescue_summary.df %>%
+  kable(caption = "Summary statistics with error bar positions") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+## Quick Sanity Check
+
+```{r quick_check}
+# quick visualization
+ggbarplot(
+  opsn1_cas_rescue.tidy %>% drop_na(),
+  x = "condition",
+  y = "percent",
+  add = "mean_se",
+  error.plot = "errorbar",
+  ylab = "% larvae attached",
+  xlab = "",
+  color = "black",
+  fill = "status",
+  palette = "uchicago",
+  label = TRUE,
+  lab.col = "black",
+  lab.size = 5,
+  lab.pos = "in",
+  lab.nb.digit = 1
+) +
+  custom_theme()
+
+# side-by-side comparison
+opsn1_cas_rescue_summary.df %>%
+  filter(condition != "sgThr_opsin2_40ug") %>%
+  mutate(status = factor(status, levels = c("swimming_larvae", "attached_larvae"))) %>%
+  ggplot(aes(x = condition, y = mean_percent, fill = status)) +
+  geom_col(position = "dodge", width = 0.7, alpha = 0.8) +
+  geom_errorbar(
+    aes(ymin = mean_percent - se, ymax = mean_percent + se),
+    position = position_dodge(width = 0.7),
+    width = 0.2
+  ) +
+  scale_fill_manual(
+    values = c("attached_larvae" = "#882222", "swimming_larvae" = "gray40"),
+    labels = c("no", "yes")
+  ) +
+  scale_y_continuous(
+    labels = scales::percent_format(scale = 1),
+    breaks = c(25, 50, 75, 100),
+    limits = c(0, 100)
+  ) +
+  labs(y = "% of Larvae", x = "Condition") +
+  custom_theme()
+```
+
+## Stacked Plot with Symmetrical CI
+
+```{r stacked_plot_symmetric}
+#-------------------------------------------------------------------------------
+# stacked plot
+rescue_plot_onlyLower <- ggplot(
+  opsn1_cas_rescue_summary.df,
+  aes(x = condition, y = mean_percent, fill = status)
+) +
+  # stacked bars (mean %)
+  geom_col(width = 0.7, alpha = 0.8, color = "black") +
+  # segment-specific error bars
+  geom_errorbar(
+    data = subset(opsn1_cas_rescue_summary.df, status == "attached_larvae"),
+    aes(
+      ymin = y_start - se,  # at the boundary
+      ymax = y_start + se
+    ),
+    width = 0.2,
+    color = "black",
+    linewidth = 0.5,
+    position = position_dodge(width = 0)
+  ) +
+  geom_text(
+    data = opsn1_cas_rescue_condition.tidy %>%
+      filter(condition != "sgThr_opsin2_40ug") %>%
+      distinct(condition, total),
+    aes(x = condition, y = 105, label = paste0("n = ", total)),
+    inherit.aes = FALSE
+  ) +
+  scale_fill_manual(
+    values = c("attached_larvae" = "#882222", "swimming_larvae" = "gray70"),
+    labels = c("Attached", "Not Attached")
+  ) +
+  labs(x = "Condition", y = "% larvae attached", fill = "Status") +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "top", panel.grid.major.x = element_blank())
+
+rescue_plot_onlyLower +
+  scale_y_continuous(
+    breaks = seq(0, 100, by = 25),
+    # labels = scales::label_number(suffix = "%"),
+    expand = expansion(mult = c(0, 0.1))
+  ) +
+  # significance stars
+  geom_text(
+    data = data.frame(
+      condition = c("sgRNA_thr", "sgThr_opsin2_20ug"),
+      y = c(125, 125),
+      label = c("**", "***") # this was *** wrong!
+    ),
+    aes(x = condition, y = y, label = label),
+    inherit.aes = FALSE, size = 6, vjust = 0.5
+  ) +
+  # brackets for comparisons
+  geom_segment(
+    data = data.frame(
+      x = c(1, 1),      # starting bar index
+      xend = c(2, 3),   # ending bar index
+      y = c(115, 120),  # height of the bracket
+      yend = c(115, 120)
+    ),
+    aes(x = x, xend = xend, y = y, yend = yend),
+    inherit.aes = FALSE
+  ) +
+  custom_theme()
+
+rescue_plot_onlyLower + theme(
+    legend.position = "bottom",
+    panel.spacing.x = unit(0.1, "cm"),  # Tighter than 0.2
+    axis.text.x = element_text(margin = margin(t = 2)),  # Less padding
+    aspect.ratio = 1.2  
+  )
+```
+
+## Batch consistency
+
+```{r}
+# ---- batch inspection  ----
+
+# Calculate proportions per replicate and condition
+batch_data <- opsn1_cas_rescue.tidy %>%
+  filter(status == "attached_larvae" & condition != "sgThr_opsin2_40ug")
+
+batch_plot <- ggplot(batch_data, aes(x = condition, y = percent, fill = condition)) +
+  # Add a background area to show the "trend" per batch
+  geom_line(aes(group = bioRep), alpha = 0.3, color = "gray50") +
+  geom_point(shape = 21, size = 3, color = "black", stroke = 1) +
+  # Facet by the biological replicate 
+  facet_wrap(~bioRep, ncol = 4) + 
+  scale_fill_manual(values = panel_a_colors) +
+  scale_y_continuous(limits = c(0, 100)) +
+  labs(
+    subtitle = "Each panel represents a different electroporation day",
+    y = "% Larvae Attached",
+    x = ""
+  ) +
+  custom_theme() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  no_legend
+
+batch_plot
+```
+
+## Statistical Analysis
+
+Binomial outcomes (successes vs. failures).
+
+Just to have an idea BUT IT IS NOT accurate, it doesn't consider biological replicate (pooling them)
+
+-   Fisher's exact test: better for small samples
+-   Chi-square test: large sample size
+
+```{r statistical_tests}
+
+#-------------------------------------------------------------------------------
+# Fisher's Exact Test | Chi test
+#-------------------------------------------------------------------------------
+
+# ---- fisher's exact test | chi test ----
+contingency_table <- opsn1_cas_rescue.df %>%
+  drop_na() %>%
+  mutate(total_larvae = swimming_larvae + attached_larvae) %>%
+  group_by(condition) %>%
+  summarise(
+    attached = sum(attached_larvae),
+    swimming = sum(swimming_larvae)
+  ) %>%
+  column_to_rownames("condition") %>%
+  as.matrix()
+
+### stat Fisher's Exact Test ==> 2.142e-14 p value
+# fisher.test(contingency_table) # failing large sampel size ==> Chi-square Test	
+
+# pearson's chi-square test
+chi_test <- chisq.test(contingency_table)
+chi_test
+
+# perform all pairwise comparisons
+pairwise_results <- pairwise.prop.test(
+  contingency_table,
+  p.adjust.method = "bonferroni"
+) %>%
+  tidy()
+
+pairwise_results %>%
+  kable(caption = "Pairwise comparisons (Bonferroni-corrected)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+## Logistic Regression
+
+I used a **Generalized Linear Mixed Model (GLMM)** with **`bioRep` as a random intercept** to account for biological and technical variability inherent in **mosaic electroporation** and **wild-caught populations**.
+
+-   The simplest model is a glm, but there is some variability in the electgroporation, the glmm wirh batch of larvae as a random effect works better to account for the variance.
+
+-   **Random Effects**: The `bioRep` works as a **random intercept** to capture baseline shifts in attachment probability between parental sets and electroporation batches. The random effect `(1 | bioRep)` captures variability between biological replicates
+    that the GLM ignores.
+
+<!-- -->
+
+-   **Fixed Effects**: Treatment conditions (Control, *Thr* Knockdown, and *Opsin2* Rescues) were treated as fixed effects.
+
+-   Glmm is penalizing for additional parameter but still lower AIC (97.2 vs 107.1) and BIC (99.2 vs 108.6)
+
+```{r logistic_regression}
+# ---- logistic regression (for modeling probability of attachment) ----
+
+# Standardizing the data object for all model comparisons
+analysis_data <- opsn1_cas_rescue.df %>% 
+  filter(condition != "sgThr_opsin2_40ug") %>%
+  mutate(condition = factor(condition, 
+                            levels = c("sgRNA_scramble", "sgRNA_thr", "sgThr_opsin2_20ug")))
+
+#-----------------------------------------------------------------------------
+# fit the simpler GLM (for comparison)
+#-------------------------------------------------------------------------------
+# ignores the batch/day effect
+rescue_glm <- glm(
+  cbind(attached_larvae, swimming_larvae) ~ condition,
+  family = binomial,
+  data = analysis_data
+)
+
+summary(rescue_glm)
+# overdispersion check
+performance::check_overdispersion(rescue_glm) # Significant overdispersion present
+
+rescue_glm %>%
+  tidy(conf.int = TRUE, exponentiate = TRUE) %>%
+  kable(caption = "GLM Results (Odds Ratios)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+# interpretation:
+# - Intercept: Baseline odds (control = lacz)
+# - sgRNA_thr: OR = 0.496  (50% lower odds vs control)
+# - opsin2_20ug: OR = 2.63 ( 163% higher odds vs control)
+
+#-----------------------------------------------------------------------------
+# fit the robust GLMM (accounting for electroporation and shipping batches)
+#-------------------------------------------------------------------------------
+# mixed model: with random intercepts for replicates
+
+rescue_glmer <- glmer(
+  cbind(attached_larvae, swimming_larvae) ~ condition + (1 | bioRep),
+  family = binomial,
+  data = analysis_data
+)
+
+
+summary(rescue_glmer)
+exp(fixef(rescue_glmer))  # get odds ratios
+summary(rescue_glmer)$varcor # checking the "Random Effect" Variance
+# extract confidence intervals for odds ratios
+confint_model <- confint(rescue_glmer, method = "Wald")
+confint_model
+
+# extract p-values for the plot
+# compare everything back to the intercept (Control)
+stats_for_plot <- summary(rescue_glmer)$coefficients %>%
+  as.data.frame() %>%
+  rownames_to_column("group2") %>%
+  filter(group2 != "(Intercept)") %>%
+  mutate(group1 = "sgRNA_scramble",
+          group2 = str_remove(group2, "condition"),
+          p.adj = `Pr(>|z|)`, # You can apply p.adjust() here if desired
+          label = case_when(p.adj < 0.001 ~ "***", p.adj < 0.01  ~ "**", p.adj < 0.05  ~ "*", TRUE ~ "ns")
+         )
+stats_for_plot
+
+#-----------------------------------------------------------------------------
+# ---- Model Comparison ----
+# Likelihood Ratio Test to justify GLMM
+lrt_result <- anova(rescue_glmer, rescue_glm)
+lrt_result # pvale < 0.05 confirms GLMM is required
+
+# overdispersion check
+dispersion_ratio <- sum(residuals(rescue_glmer, type = "pearson")^2) / df.residual(rescue_glmer)
+message("Dispersion Ratio: ", round(dispersion_ratio, 3))
+
+performance::check_overdispersion(rescue_glmer)
+# No significant overdispersion
+
+#-----------------------------------------------------------------------------
+# tidy results  
+bind_rows(
+  broom.mixed::tidy(rescue_glm, effects = "fixed", conf.int = TRUE) %>% mutate(model = "GLM"),
+  broom.mixed::tidy(rescue_glmer, effects = "fixed", conf.int = TRUE) %>% mutate(model = "GLMM")
+) %>%
+  mutate(OR = exp(estimate),lower_CI = exp(conf.low),upper_CI = exp(conf.high)) %>%
+  dplyr::select(model, term, OR, lower_CI, upper_CI, std.error, p.value)  %>%
+  kable(caption = "Comparison of GLM and GLMM models") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+
+# ----  Table: GLMM Odds Ratios ----
+table_ready <- broom.mixed::tidy(rescue_glmer, conf.int = TRUE, effects = "fixed") %>%
+  mutate(OR = exp(estimate), lower_CI = exp(conf.low), upper_CI = exp(conf.high)) %>%
+  dplyr::select(term, OR, lower_CI, upper_CI, std.error, p.value) %>%
+  mutate(term = case_when(
+    term == "(Intercept)" ~ "Control (sgRNA_scramble)",
+    term == "conditionsgRNA_thr" ~ "Thr Knockdown (sgRNA_thr)",
+    term == "conditionsgThr_opsin2_20ug" ~ "Rescue (sgThr_opsin2_20ug)",
+    TRUE ~ term))
+
+format_pvalues_vec <- function(p_vec) {case_when(
+    p_vec < 0.001 ~ format(p_vec, scientific = TRUE, digits = 2),
+    TRUE ~ as.character(round(p_vec, 4))
+  )
+}
+
+table_ready %>%
+  mutate(p.value = format_pvalues_vec(p.value)) %>% 
+  kbl(
+    caption = "Table 1: Logistic Regression Analysis of Attachment Probability (GLMM)",
+    digits = 3,
+    booktabs = TRUE,
+    col.names = c("Condition", "Odds Ratio", "95% CI Lower", "95% CI Upper", "Std. Error", "p-value"),
+    align = "lccccc"
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), full_width = FALSE) %>%
+  column_spec(6, bold = (table_ready$p.value < 0.05)) #  bold  significant p-value 
+
+```
+
+|                        |                     |             |                                                                                |
+|------------------------|---------------------|-------------|--------------------------------------------------------------------------------|
+| **Contrast**           | **Odds Ratio (OR)** | **p-value** | **Biological Interpretation**                                                  |
+| **KD vs. Control**     | **0.551**           | $0.0013$    | *Thr* knockdown reduces attachment odds by \~45%.                              |
+| **Rescue vs. Control** | **3.986**           | $<0.0001$   | *Opsin2* increases attachment odds by nearly 4-fold over baseline.             |
+| **Rescue vs. KD**      | **7.227**           | $<0.0001$   | **The Key Result:** Rescue has \>7x higher odds of success than the knockdown. |
+
+```{r}
+# ---- Forest Plot of Odds Ratios (effect size) ----
+forest_plot <- ggplot(table_ready %>% filter(term != "Control (sgRNA_scramble)"), 
+                      aes(x = OR, y = term)) +
+  geom_vline(xintercept = 1, linetype = "dashed", color = "red") +
+  geom_errorbarh(aes(xmin = lower_CI, xmax = upper_CI), height = 0.2) +
+  geom_point(size = 4, aes(color = term)) +
+  scale_x_log10(breaks = c(0.5, 1, 3, 5)) +
+  labs(
+    title = "Effect Size (Odds Ratios)",
+    x = "Odds Ratio (log scale)",
+    y = ""
+  ) +
+  scale_color_manual(values = c("Thr Knockdown (sgRNA_thr)" = "#00AAAB", 
+                                "Rescue (sgThr_opsin2_20ug)" = "#1970DB")) +
+  custom_theme() +
+  no_legend
+
+forest_plot
+```
+
+## Binomial Confidence Intervals
+
+Wilson CIs for asymmetry
+
+```{r wilson_ci}
+
+# ---- wilson CIs ----
+opsn1_cas_rescue_BiCI.df <- opsn1_cas_rescue_condition.tidy %>%
+  drop_na() %>%
+  group_by(condition, status) %>%
+  mutate(
+    BiCI_low = binom.confint(count, total, methods = "wilson")$lower * 100,
+    BiCI_high = binom.confint(count, total, methods = "wilson")$upper * 100
+  )
+
+# merge CI data with positioning info
+CI_data <- opsn1_cas_rescue_summary.df %>%
+  # align status names between datasets
+  mutate(status = case_when(
+    status == "attached_larvae" ~ "attached",
+    status == "swimming_larvae" ~ "not_attached",
+    TRUE ~ status
+  )) %>%
+  left_join(opsn1_cas_rescue_BiCI.df, by = c("condition", "status")) %>%
+  # calculate error bar positions
+  mutate(
+    BiCI_low_position = y_start + BiCI_low - mean_percent,
+    BiCI_high_position = y_start + BiCI_high - mean_percent
+  )
+
+CI_data %>%
+  select(
+    condition, status, mean_percent, y_start, BiCI_low, BiCI_high,
+    BiCI_low_position, BiCI_high_position
+  ) %>%
+  kable(caption = "Wilson CI positions") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+# eg repertive code but it works; to fix later 
+# calculate pooled wilson CIs
+wilson_stats <- opsn1_cas_rescue.df %>%
+  drop_na() %>%
+  mutate(total_larvae = swimming_larvae + attached_larvae) %>%
+  group_by(condition) %>%
+  summarise(
+    attached_sum = sum(attached_larvae),
+    total_sum = sum(total_larvae),
+    .groups = "drop"
+  ) %>%
+  rowwise() %>%
+  mutate(
+    # calculate Wilson CI using the binom package
+    res = list(binom.confint(attached_sum, total_sum, method = "wilson")),
+    mean_prop = res$mean * 100,
+    lower = res$lower * 100,
+    upper = res$upper * 100
+  ) %>%
+  select(-res)
+
+# simple bar plot with wilson CIs
+ggplot() +
+  # bar for the pooled proportion (attached only)
+  geom_col(
+    data = wilson_stats %>% filter(condition != "sgThr_opsin2_40ug"),
+    aes(x = condition, y = mean_prop,fill = condition), width = 0.6, alpha = 0.7,
+    
+    color = "black" ) +
+  scale_fill_manual(values = panel_a_colors) +
+ 
+  # wilson confidence intervals (asymmetric)
+  geom_errorbar(
+    data = wilson_stats,
+    aes(x = condition, ymin = lower, ymax = upper),
+    width = 0.15, linewidth = 0.8, color = "black") +
+  # individual replicate points (to show the "raw" variance)
+  geom_jitter(
+    data = filter(opsn1_cas_rescue.tidy, status == "attached_larvae" & condition != "sgThr_opsin2_40ug"),
+    aes(x = condition, y = percent),
+    shape = 21, fill = "white", color = "black", 
+    size = 3, stroke = 1, width = 0.1) +
+  # significance and N-labels
+  geom_text(
+    data = wilson_stats,
+    aes(x = condition, y = upper + 5, label = paste0("n=", total_sum)),
+    size = 3.5, vjust = 0
+  ) +
+  stat_pvalue_manual(stats_for_plot, y.position = 95, step.increase = 0.1, label = "label", tip.length = 0.02) +
+  labs(y = "Larvae Attached (%)", x = NULL) +
+  scale_y_continuous(limits = c(0, 110), breaks = seq(0, 100, 20)) +
+  custom_theme() +
+  no_legend
+
+
+```
+
+## Main Figure: Stacked Plot with Wilson CIs
+
+```{r main_figure, fig.width=10, fig.height=8}
+# ---- stacked plot + wilson CIs ----
+
+rescue_plot_BiCI <- ggplot(
+  opsn1_cas_rescue_summary.df,
+  aes(x = condition, y = mean_percent, fill = status)
+) +
+  geom_col(width = 0.7, alpha = 0.8, color = "black") +  # stacked bars
+  # error bars at attachment boundary (using calculated positions)
+  geom_errorbar(
+    data = CI_data %>% filter(status == "attached"),
+    aes(ymin = BiCI_low_position, ymax = BiCI_high_position),
+    width = 0.25,
+    color = "black",
+    linewidth = 0.8
+  ) +
+  # sample size labels
+  geom_text(
+    data = opsn1_cas_rescue_BiCI.df %>%
+      filter(condition != "sgThr_opsin2_40ug") %>%
+      group_by(condition) %>%
+      summarize(total = first(total)),
+    aes(x = condition, y = 110, label = paste0("n=", total)),
+    inherit.aes = FALSE,
+    size = 3.5
+  ) +
+  scale_fill_manual(
+    values = c("attached_larvae" = "#882222", "swimming_larvae" = "gray70"),
+    labels = c("Attached", "Swimming")
+  ) +
+  labs(
+    x = "",
+    y = "Percentage of Larvae (%)",
+    fill = "Attachment Status"
+  ) +
+  custom_theme() +
+  theme(
+    legend.position = "top",
+    panel.grid.major.x = element_blank()
+  ) +
+  coord_cartesian(ylim = c(0, 115)) +
+  # significance brackets and stars
+  stat_pvalue_manual(
+    data = data.frame(
+      group1 = "sgRNA_scramble",
+      group2 = c("sgRNA_thr", "sgThr_opsin2_20ug"),
+      p.signif = c("**", "***"),  # GLMM p-values
+      #== thi was my pug i previusly put *** and ***
+      # but summary(rescue_glmer) is  
+      # conditionsgRNA_thr          -0.5952     0.1848  -3.220  0.00128 ** 
+    # conditionsgThr_opsin2_20ug   1.3827     0.1754   7.881 3.25e-15 ***
+      status = c("attached", "attached"),
+      y.position = c(110, 115)
+    ),
+    label = "p.signif",
+    tip.length = 0.01,
+    bracket.size = 0.6
+  )
+
+rescue_plot_BiCI
+```
+
+## Save Plots
+
+```{r save_plots}
+if (SAVE_OUTPUTS) {
+  
+  # save with cowplot - various sizes
+  cowplot::save_plot(
+    plot = rescue_plot_BiCI,
+    base_height = 4,
+    base_asp = 4 / 1.9,
+    file = opath("photoreceptor_rescue_plot_a.pdf")
+  )
+  
+  cowplot::save_plot(
+    plot = rescue_plot_BiCI,
+    base_height = 8,
+    base_asp = 1.9,
+    file = opath("photoreceptor_rescue_plot_b.pdf"),
+    limitsize = FALSE
+  )
+  
+  # save with CairoPDF
+  width_in <- 40
+  aspect_ratio <- 3/4
+  height_in <- width_in * aspect_ratio
+  
+  CairoPDF(
+    opath("photoreceptor_rescue_plot_cairo.pdf"),
+    width = width_in,
+    height = height_in
+  )
+  print(rescue_plot_BiCI)
+  dev.off()
+  
+  # additional sizes
+  cowplot::save_plot(
+    plot = rescue_plot_BiCI,
+    base_width = 2.4 * 5,
+    base_height = 3.6 * 5,
+    file = opath("photoreceptor_rescue_plot_final.pdf")
+  )
+  
+  message("\nPlots saved to: ", out_dir)
+}
+```
+
+## Session Info
+
+```{r session_info}
+sessionInfo()
+```

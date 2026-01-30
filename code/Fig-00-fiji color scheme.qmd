@@ -1,0 +1,163 @@
+---
+title: "Fig-00-fiji color scheme"
+author: "Andrea Mariossi"
+
+format:
+  html:
+    embed-resources: true
+    toc: true
+    toc-location: left
+    toc-depth: 5
+    code-fold: false
+    code-line-numbers: true
+    page-layout: article
+    grid:
+      sidebar-width: 100px
+      body-width: 2000px
+      margin-width: 100px
+      gutter-width: 3.5rem
+
+execute:
+  echo: true
+
+fig-width: 18
+fig-height: 10
+fig-align: center
+fig-format: png
+out-width: "90%"
+
+editor_options:
+  chunk_output_type: inline
+---
+
+Color match plot genes in Figure generate in R and expression spatial HCR and/or reproter assays to confocal/fiji images
+
+```{r}
+rm(list = ls())
+
+library(tidyverse)
+library(ggplot2)
+```
+
+```{r color_Fiji}
+##### Function to convert hex to RGB
+hex_to_rgb <- function(hex_color) {
+  # Remove the '#' from the start if it's there
+  if (startsWith(hex_color, "#")) {
+    hex_color <- substr(hex_color, 2, nchar(hex_color))
+  }
+  
+  # Extract RGB values
+  r <- as.integer(paste0("0x", substr(hex_color, 1, 2)))
+  g <- as.integer(paste0("0x", substr(hex_color, 3, 4)))
+  b <- as.integer(paste0("0x", substr(hex_color, 5, 6)))
+  
+  return(list(R = r, G = g, B = b))
+}
+
+rgb_values <- hex_to_rgb("#00a087")
+rgb_values <- hex_to_rgb("#011087")
+
+# Print the RGB values
+color <- paste(rgb_values$R,rgb_values$G,rgb_values$B)
+
+# Define the start and end colors
+start_color <- c(0, 0, 0) # black
+end_color <- as.numeric(strsplit(color, " ")[[1]])
+
+gradient_steps <- (end_color - start_color) / 255 # Calculate the gradient steps for each RGB component
+lut_matrix <- matrix(0, nrow=256, ncol=3) # Create  gradient LUT
+
+for (i in 1:256) {
+  lut_matrix[i,] <- start_color + gradient_steps * (i-1)
+}
+
+lut_matrix  <- round(lut_matrix) # Round the values to ensure they are integers
+
+# write.table(lut_matrix, file="~/Desktop/thyroid_green.lut", col.names=FALSE, row.names=FALSE, quote=FALSE, sep="\t") # save 
+
+```
+
+## also works
+
+```{r color_Fiji_2}
+# ---- hex -> RGB (ignores alpha if present) ----
+hex_to_rgb <- function(hex) {
+  hex <- gsub("^#", "", hex)
+  if (nchar(hex) == 8) hex <- substr(hex, 1, 6)      # drop AA
+  if (nchar(hex) != 6) stop("hex must be RRGGBB or RRGGBBAA")
+
+  c(
+    R = as.integer(paste0("0x", substr(hex, 1, 2))),
+    G = as.integer(paste0("0x", substr(hex, 3, 4))),
+    B = as.integer(paste0("0x", substr(hex, 5, 6)))
+  )
+}
+
+# ---- build a 256x3 LUT (linear ramp) ----
+make_linear_lut <- function(end_hex, start_hex = "#000000") {
+  start_rgb <- hex_to_rgb(start_hex)
+  end_rgb   <- hex_to_rgb(end_hex)
+
+  t(sapply(0:255, function(i) {
+    round(start_rgb + (end_rgb - start_rgb) * (i / 255))
+  })) |> `colnames<-`(c("R","G","B"))
+}
+
+# ---- heatmap ----
+plot_lut_ramp <- function(lut, title = NULL) {
+  lut <- as_tibble(lut)
+  colnames(lut) <- c("R","G","B")
+
+  cols <- rgb(lut$R, lut$G, lut$B, maxColorValue = 255)
+
+  op <- par(mar = c(3, 2, ifelse(is.null(title), 1, 3), 1))
+  on.exit(par(op), add = TRUE)
+
+  plot(NA, xlim = c(0, 256), ylim = c(0, 1),
+       xlab = "LUT index", ylab = "", yaxt = "n", bty = "n")
+  rect(xleft = 0:255, ybottom = 0, xright = 1:256, ytop = 1,
+       col = cols, border = NA)
+
+  if (!is.null(title)) {
+    title(main = title)
+  }
+}
+
+# ---- write as 3-column text (tab-delimited) ----
+# write_lut_text <- function(lut, path) {
+#   write.table(lut, file = path, col.names = FALSE, row.names = FALSE, quote = FALSE, sep = "\t")
+# }
+
+# ---- write as native ImageJ/Fiji .lut (768 bytes: R plane, G plane, B plane) ----
+write_lut_raw <- function(lut, path, plane_order = c("R","G","B")) {
+  plane_order <- match.arg(plane_order, several.ok = TRUE)
+  if (!all(plane_order %in% colnames(lut))) stop("lut must have R,G,B columns")
+
+  con <- file(path, open = "wb")
+  on.exit(close(con), add = TRUE)
+
+  for (ch in plane_order) {
+    writeBin(as.raw(lut[, ch]), con)
+  }
+}
+
+
+```
+
+```{r}
+lut_thr <- make_linear_lut("#00A087")
+lut_brown <- make_linear_lut("#BA7E45FF")
+
+
+# if lut_matrix has no colnames, this works anyway
+plot_lut_ramp(lut_thr, title = "thyroid_green")
+plot_lut_ramp(lut_matrix, title = "thyroid_green")
+
+# ---- save ----
+# dir.create("luts", showWarnings = FALSE)
+# # Native .lut (recommended)
+# write_lut_raw(lut_thr, "luts/thyroid_green.lut")
+# write_lut_raw(lut_brown, "luts/thyroid_brown.lut")
+
+```

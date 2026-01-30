@@ -1,0 +1,1011 @@
+---
+title: "T4 Tail Regression Analysis"
+author: "Andrea Mariossi"
+format:
+  html:
+    embed-resources: true
+    toc: true
+    toc-location: left
+    toc-depth: 5
+    code-fold: false
+    code-line-numbers: true
+    page-layout: article
+    grid:
+      sidebar-width: 100px
+      body-width: 2000px
+      margin-width: 100px
+      gutter-width: 3.5rem
+execute:
+  echo: true
+  warning: false
+  message: true
+fig-width: 12
+fig-height: 12
+fig-align: center
+fig-format: png
+editor_options:
+  chunk_output_type: inline
+---
+
+## Experimental Design: T4-Exposure Time-Course
+
+### Overview
+
+**`Overview`**
+
+For each experimental day (replicate_batch), embryos are obtained from a parent set of (5–7 adults). Eggs are pooled and fertilized using a mixed sperm pool from the same parent set. After fertilization, embryos are randomly allocated into dishes assigned
+to one of six conditions (Control and Cond_1–Cond_5), which represent different T4-exposure durations.
+
+### Replicate Batches and Conditions
+
+-   **Number of replicate_batch:** 4 (performed on 4 different days)
+-   **Conditions per replicate_batch (6 total):** Control, Cond_1, Cond_2, Cond_3, Cond_4, Cond_5
+    -   Cond_1–Cond_5 correspond to different T4-exposure durations
+
+### Sample Size and Measurements
+
+-   **Embryos per dish (approx.):** 30–70
+-   **Measured n per dish:** varies by dish (e.g., 33, 37, 42, 47, 49, 50, 53, …)
+-   **Measurement:** tail length
+-   **Measurement frequency:** each embryo is measured once (one tail-length measurement per individual)
+
+## Setup
+
+```{r setup}
+rm(list = ls())
+
+# ---- packages ----
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(readxl)
+  library(ggpubr)
+  library(knitr)
+  library(kableExtra)
+  library(ggdist)
+  library(gghalves)
+  library(ggforce)
+  library(rstatix)
+  library(lme4)
+  library(lmerTest)
+  library(emmeans)
+  library(performance)
+  library(DHARMa)
+  library(Cairo)
+  library(cowplot)
+})
+```
+
+## Data Loading
+
+```{r}
+# ---- paths ----
+data_dir <- file.path("..", "source_data")
+out_dir  <- file.path("..", "output")
+
+# Uncomment for local absolute path:
+# data_dir <- "/Users/andrea/Library/CloudStorage/GoogleDrive-andrea.mariossi@gmail.com/My Drive/4.paper_archive/2025_thyroid_pathway_&_metamorphosis/04.SciAdv_rev/source_data/"
+
+SAVE_OUTPUTS <- FALSE
+if (!dir.exists(out_dir)) dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+
+# helpers
+dpath <- function(...) file.path(data_dir, ...)
+opath <- function(...) file.path(out_dir, ...)
+
+# ---- dataset ----
+data_file <- "9_T4_percentange_tail_regression.xlsx"
+stopifnot(file.exists(dpath(data_file)))
+```
+
+## Theme & Style
+
+```{r}
+# ---- theme & style ----
+custom_theme <- function() {
+  theme(
+    axis.ticks = element_line(linewidth = 0.5),
+    axis.ticks.length = unit(0.09, "cm"),
+    legend.key.height = unit(20, "pt"),
+    axis.line = element_blank(),
+    panel.border = element_rect(colour = "black", fill = NA, linewidth = 1),
+    panel.background = element_blank(),
+    plot.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    legend.background = element_blank(),
+    legend.box.background = element_blank(),
+    legend.key = element_blank(),
+    strip.background = element_blank()
+  )
+}
+
+theme_set(theme_pubr(base_size = 13, base_family = "Helvetica") + custom_theme())
+
+# ---- condition order ----
+cond_levels <- c("Control","Cond_1","Cond_2","Cond_3","Cond_4","Cond_5")
+
+# ---- color palette ----
+color_scheme <- c(
+  "Control"  = "#999999",
+  "Cond_1"   = "#d9f0a3",
+  "Cond_2"   = "#addd8e",
+  "Cond_3"   = "#78c679",
+  "Cond_4"   = "#41ab5d",
+  "Cond_5"   = "#238443"
+)
+
+# ---- pretty p-values for kable ----
+format_pvalues <- function(df) {
+  df %>%
+    mutate(across(
+      any_of(c("p.value", "p.value.x", "p.value.y", "adj.p.value", "p.adj")),
+      ~ case_when(
+        . < 0.001 ~ format(., scientific = TRUE, digits = 2),
+        TRUE ~ as.character(round(., 4))
+      )
+    ))
+}
+```
+
+## Data Preprocessing
+
+```{r}
+# ============================================================================
+# T4 TAIL REGRESSION ANALYSIS
+# Drug-Exposure Time-Course Experiment
+# ============================================================================
+# EXPERIMENTAL DESIGN:
+# - 4 replicate batches (different days, different parent sets)
+# - 6 conditions per batch: Control + Cond_1 to Cond_5 (drug exposure times)
+# - ~40-60 embryos per dish
+# - Unit of replication: DISH (replicate_batch × condition)
+# - Total dishes: 24 (4 batches × 6 conditions)
+# - Measurement: tail length (% of body) - one per embryo
+# ============================================================================
+
+# Replicate Batch 1 (Day 1, adults A):
+# ├── Dish 1: Control (n=47 embryos)
+# ├── Dish 2: Cond_1 (n=52 embryos)
+# ├── Dish 3: Cond_2 (n=49 embryos)
+# ├── Dish 4: Cond_3 (n=45 embryos)
+# ├── Dish 5: Cond_4 (n=51 embryos)
+# └── Dish 6: Cond_5 (n=48 embryos)
+# 
+# Replicate Batch 2 (Day 2, adults B):
+# ├── Dish 2_Control    → embryos 1, 2, 3, ...
+# ├── Dish 2_Cond_1     → embryos 1, 2, 3, ...
+# └── ...
+# 
+# Replicate Batch 3 (Day 3, Parents C)
+# └── ...
+# 
+# ReplicateBatch 4 (Day 4, Parents D)
+# └── ...
+# 
+# Total: 4 batches × 6 conditions = 24 dishes
+```
+
+```{r}
+# ============================================================================
+# T4 TAIL REGRESSION ANALYSIS
+
+# ---- load wide ----
+T4_tailReg.df <- readxl::read_excel(dpath(data_file))
+
+T4_tailReg.df %>%
+  head() %>%
+  kable(caption = "T4 tail regression (wide): first 6 rows") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+# ---- tidy long ----
+T4_tailReg_tidy <- T4_tailReg.df %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = c("condition", "replicate_batch"),
+    names_pattern = "^(.*)_rep(\\d+)$",
+    values_to = "tail_length",
+    values_drop_na = TRUE
+  ) %>%
+  mutate(
+    condition = factor(condition, levels = cond_levels),
+    replicate_batch = factor(replicate_batch),
+    dish_id = interaction(replicate_batch, condition, drop = TRUE)
+  )
+
+# # quick counts
+# counts_by_dish <- T4_tailReg_tidy %>%
+#   count(condition, replicate_batch, name = "n_fish") %>%
+#   arrange(condition, replicate_batch)
+# # Summarise by treatment 
+# T4_tailReg_tidy |>
+#   filter(!is.na(tail_length)) |>
+#   summarise(n_individuals = n(), .by = condition)
+# # Summarise by replicate_batch
+# T4_tailReg_tidy |>
+#   filter(!is.na(tail_length)) |>
+#   summarise(n_individuals = n(), .by = replicate_batch)
+# # totals embryos counts
+# T4_tailReg_tidy |>
+#   filter(!is.na(tail_length)) |>
+#   count(condition, replicate_batch, name = "n_individuals") |>
+#   summarise(total_individuals = sum(n_individuals))
+
+# counts_by_dish %>%
+#   kable(caption = "Counts per dish (condition × replicate_batch)") %>%
+#   kable_styling(bootstrap_options = c("striped", "hover"))
+
+cat("\n=== DATA STRUCTURE ===\n")
+cat("Total embryo measurements:", nrow(T4_tailReg_tidy), "\n")
+cat("Number of batches:", n_distinct(T4_tailReg_tidy$replicate_batch), "\n")
+cat("Number of conditions:", n_distinct(T4_tailReg_tidy$condition), "\n")
+cat("Total dishes:", n_distinct(T4_tailReg_tidy$dish_id), "\n\n")
+```
+
+## QC Data
+
+```{r}
+#| fig-width: 12
+#| fig-height: 7
+#| out-width: 100%
+
+# ---- basic boxplot x replicate ----
+ggplot(T4_tailReg_tidy, aes(x = condition, y = tail_length, fill = replicate_batch)) +
+  geom_boxplot(alpha = 0.7) +
+  labs(title = "Tail Length by Condition",
+       subtitle = "Colored by replicate batch",
+       x = "Condition", 
+       y = "Tail Length") +
+  custom_theme()
+
+
+# ---- basic boxplot x condition + jitter ----
+ggplot(T4_tailReg_tidy, aes(x = condition, y = tail_length, fill = condition)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.8) +
+  geom_jitter(width = 0.15, alpha = 0.25, size = 1) +
+  scale_fill_manual(values = color_scheme) +
+  labs(x = "", y = "") +
+  custom_theme() +
+  guides(fill = "none")
+
+# ---- violin x condition + boxplot ----
+ggplot(T4_tailReg_tidy, aes(x = condition, y = tail_length, fill = condition)) +
+  geom_violin(trim = FALSE, alpha = 0.6) +
+  geom_boxplot(width = 0.12, fill = "white", outlier.shape = NA) +
+  scale_fill_manual(values = color_scheme) +
+  labs(x = "", y = "") +
+  custom_theme() +
+  guides(fill = "none")
+```
+
+## Statistical Analysis
+
+```{r}
+# ---- sample size summary ----
+sample_summary <- T4_tailReg_tidy %>%
+  group_by(condition, replicate_batch) %>%
+  summarise(n_embryos = n(), .groups = "drop")
+
+sample_summary %>% 
+  pivot_wider(names_from = replicate_batch, values_from = n_embryos) %>%
+  kable(caption = "Embryos per dish") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+condition_totals <- sample_summary %>%
+  group_by(condition) %>%
+  summarise(total_embryos = sum(n_embryos))
+
+condition_totals %>%
+  kable(caption = "Total embryos per condition") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+# ---- aggregate to dish level ----
+dish_stats <- T4_tailReg_tidy %>%
+  group_by(replicate_batch, condition, dish_id) %>%
+  summarise(
+    mean_tail = mean(tail_length, na.rm = TRUE),
+    sd_tail   = sd(tail_length, na.rm = TRUE),
+    n_embryos = n(),
+    se_tail   = sd_tail / sqrt(n_embryos),
+    .groups = "drop"
+  )
+
+dish_stats %>%
+  kable(caption = "Dish-level summary (replicate_batch × condition)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+# ---- condition means across batches ----
+condition_means <- dish_stats %>%
+  group_by(condition) %>%
+  summarise(
+    mean = mean(mean_tail),
+    sd   = sd(mean_tail),
+    n_batches = n(),
+    se   = sd / sqrt(n_batches),
+    ci_lower = mean - qt(0.975, n_batches - 1) * se,
+    ci_upper = mean + qt(0.975, n_batches - 1) * se,
+    .groups = "drop"
+  )
+
+condition_means %>%
+  kable(caption = "Condition summary across batches (dish means ± 95% CI)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+#### Blocked ANOVA on Dish Means
+
+$$
+\text{mean_tail}_{bc} = \beta_0 + \beta_c \cdot \text{Condition}_c + \gamma_b \cdot \text{Batch}_b + \epsilon_{bc}
+$$
+
+Where:
+
+-   $\text{mean_tail}_{bc}$ = mean tail length for batch $b$, condition $c$
+-   $\beta_0$ = intercept (baseline tail length for Control in reference batch)
+-   $\beta_c$ = fixed effect of condition $c$ (treatment effect, $c \in \{\text{Cond\_1, ..., Cond\_5}\}$)
+-   $\gamma_b$ = fixed effect of batch $b$ (blocking factor, $b \in \{2, 3, 4\}$)
+-   $\epsilon_{bc} \sim \mathcal{N}(0, \sigma^2)$ = residual error
+
+Design:
+
+-   $b \in \{1, 2, 3, 4\}$ (4 replicate batches: different experiments days)
+-   $c \in \{\text{Control, Cond\_1, Cond\_2, Cond\_3, Cond\_4, Cond\_5}\}$ (control + 5 T4 windows-exposure conditions)
+-   $n = 24$ dishes (experimental units: $4 \text{ batches} \times 6 \text{ conditions}$)
+
+```{r}
+# Design: condition = treatment (fixed)
+#         replicate_batch = blocking factor (fixed)
+# Why: Each batch is a complete independent replicate containing all conditions
+
+# ---- blocked linear model on dish means ----
+fit_dish <- lm(mean_tail ~ condition + replicate_batch, data = dish_stats)
+
+# ANOVA table
+anova_dish <- anova(fit_dish)
+print(anova_dish)
+
+# Contrasts: each condition vs Control (BH adjusted)
+emm_dish <- emmeans(fit_dish, ~ condition)
+contrasts_dish <- contrast(emm_dish, method = "trt.vs.ctrl", ref = "Control") %>%
+                  summary(adjust = "BH", infer = TRUE)
+contrasts_dish %>%
+  as.data.frame() %>%
+  format_pvalues() %>%
+  kable(caption = "Contrasts vs Control (dish means; BH adjusted)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+
+### Model Diagnostics
+
+```{r}
+#| fig-width: 12
+#| fig-height: 10
+
+# Model diagnostics
+cat("\n--- Checking Model Assumptions ---\n")
+par(mfrow = c(2, 2))
+plot(fit_dish)
+par(mfrow = c(1, 1))
+performance::check_model(fit_dish)
+
+# DHARMa is most informative for mixed models:
+sim_res <- DHARMa::simulateResiduals(fit_dish)
+plot(sim_res)
+```
+
+-   **Residuals vs Fitted:** Random scatter (good - no pattern)
+-   **Q-Q Plot:** Points follow the line well (normality assumption met)
+-   **Scale-Location:** Relatively flat (homogeneity of variance OK)
+-   **Residuals vs Factor Levels:** Balanced across conditions (good)
+
+**Results:** F(5,15) = 348.8, p \< 0.001 \*\*\*
+
+T4 windows exposure duration has a **massive effect** on tail regression.
+
+**Batch effect:** Not significant (F = 0.73, p = 0.55)
+
+**4 windows** exposure duration has a **massive effect** on tail regression.
+
+**Batch effect:** Not significant (F = 0.73, p = 0.55)
+
+| Condition  | Mean Difference | 95% CI         | Effect          |
+|------------|-----------------|----------------|-----------------|
+| **Cond_1** | +29.5%          | \[27.1, 31.9\] | Much longer     |
+| **Cond_2** | +18.5%          | \[16.0, 20.9\] | Longer          |
+| **Cond_3** | +6.1%           | \[3.7, 8.5\]   | Slightly longer |
+| **Cond_4** | +15.5%          | \[13.0, 17.9\] | Longer          |
+| **Cond_5** | +22.8%          | \[20.4, 25.2\] | Much longer     |
+
+### Linear Mixed Model with Nested Random Effects
+
+$$
+\text{tail_length}_{bcd} = \beta_0 + \beta_c \cdot \text{Condition}_c + u_b + u_{bd} + \epsilon_{bcd}
+$$
+
+Where:
+
+-   $\text{tail_length}_{bcd}$ = tail length for embryo $d$ in dish within batch $b$, condition $c$
+-   $\beta_0$ = fixed intercept (overall mean for Control)
+-   $\beta_c$ = fixed effect of condition $c$ (treatment effect, $c \in \{\text{Cond\_1, ..., Cond\_5}\}$)
+-   $u_b \sim \mathcal{N}(0, \sigma^2_{\text{batch}})$ = random intercept for batch $b$ (day/parent variation)
+-   $u_{bd} \sim \mathcal{N}(0, \sigma^2_{\text{dish}})$ = random intercept for dish within batch (dish-level variation)
+-   $\epsilon_{bcd} \sim \mathcal{N}(0, \sigma^2)$ = residual error (embryo-level variation)
+
+**Random Effects Structure:**
+
+$$
+(1 | \text{replicate\_batch/dish\_id}) \equiv (1 | \text{replicate\_batch}) + (1 | \text{replicate\_batch:dish\_id})
+$$
+
+This accounts for:
+
+1.  **Batch-level variation** ($\sigma^2_{\text{batch}}$): differences between experimental days/parent sets
+2.  **Dish-level variation** ($\sigma^2_{\text{dish}}$): differences between dishes within the same batch
+3.  **Embryo-level variation** ($\sigma^2$): measurement variation between embryos within the same dish
+
+**Variance Partitioning:**
+
+$$
+\text{Var}(\text{tail\_length}) = \sigma^2_{\text{batch}} + \sigma^2_{\text{dish}} + \sigma^2_{\text{residual}}
+$$
+
+**Note:** If random effect variances are estimated as zero (singular fit), this indicates minimal variation at those levels, and a simpler blocked ANOVA on dish means may be more appropriate.
+
+```{r}
+# ============================================================================
+# Alternative approach: account for dish clustering within the same physical dish
+# Batch as a fixed block and Dish as a random effect
+# Note: This should give similar results but with more detail on variance components
+# ============================================================================
+
+# ---- nested mixed model ----
+fit_mixed <- lmer(tail_length ~ condition + (1 | replicate_batch/dish_id), 
+                  data = T4_tailReg_tidy)
+
+# boundary (singular) fit ==> variation is at the embryo level, treatment effect is SO strong (F = 348) that it overwhelms any dish-to-dish variation. Dishes within the same condition are extremely similar
+# That warning means the random‐effect variance for (1 | replicate_batch) is estimated ~0 (i.e., your 4 runs don’t differ much after accounting for condition), or the model can’t reliably estimate it with so few runs.
+
+cat("\n--- Model Summary ---\n")
+print(summary(fit_mixed))
+
+cat("\n--- ANOVA ---\n")
+print(anova(fit_mixed))
+
+cat("\n--- Variance Components ---\n")
+print(VarCorr(fit_mixed))
+
+# Contrasts from mixed model
+emm_mixed <- emmeans(fit_mixed, ~ condition)
+contrasts_mixed <- summary(
+  contrast(emm_mixed, method = "trt.vs.ctrl", ref = "Control"),
+  adjust = "BH"
+)
+
+contrasts_mixed %>%
+  as.data.frame() %>%
+  format_pvalues() %>%
+  kable(caption = "Contrasts vs Control (fish-level lmer; BH adjusted)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+### Mixed Model Diagnostics
+
+```{r}
+#| fig-width: 12
+#| fig-height: 10
+
+performance::check_model(fit_mixed)
+
+# DHARMa residuals
+sim_res <- DHARMa::simulateResiduals(fit_mixed, plot = FALSE)
+plot(sim_res)
+```
+
+## Visualization
+
+### Dish Means per Batch (Spaghetti Plot)
+
+```{r}
+#| label: t4-tail-dish-means
+#| fig-width: 12
+#| fig-height: 7
+
+spaghetti_plot <- ggplot() +
+  geom_line(
+    data = dish_stats,
+    aes(x = condition, y = mean_tail, group = replicate_batch),
+    alpha = 0.4, linewidth = 0.8
+  ) +
+  geom_point(
+    data = dish_stats,
+    aes(x = condition, y = mean_tail, shape = replicate_batch),
+    size = 3, alpha = 0.7
+  ) +
+  geom_errorbar(
+    data = condition_means,
+    aes(x = condition, ymin = ci_lower, ymax = ci_upper),
+    width = 0.15, linewidth = 1
+  ) +
+  geom_line(
+    data = condition_means,
+    aes(x = condition, y = mean, group = 1),
+    linewidth = 1.5
+  ) +
+  geom_point(
+    data = condition_means,
+    aes(x = condition, y = mean),
+    size = 4.5, shape = 21, fill = "white", stroke = 1.5
+  ) +
+  geom_hline(yintercept = 50, linetype = "dashed", color = "#999999", linewidth = 1) +
+  labs(
+    x = "Drug Exposure Duration",
+    y = "Mean Tail Length (% of body)",
+    shape = "Batch",
+    title = "Dish means per batch + overall mean ± 95% CI"
+  ) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5, size = 14),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    legend.position = "right"
+  )
+
+print(spaghetti_plot)
+
+
+line_plot <- ggplot() +
+  geom_line(
+    data = dish_stats,
+    aes(x = condition, y = mean_tail, group = replicate_batch),
+    alpha = 0.5
+  ) +
+  geom_point(
+    data = dish_stats,
+    aes(x = condition, y = mean_tail),
+    size = 2.3,
+    alpha = 0.8
+  ) +
+  geom_errorbar(
+    data = condition_means,
+    aes(x = condition, ymin = ci_l, ymax = ci_u),
+    width = 0.15,
+    linewidth = 0.8
+  ) +
+  geom_line(
+    data = condition_means,
+    aes(x = condition, y = mean, group = 1),
+    linewidth = 1.2
+  ) +
+  geom_point(
+    data = condition_means,
+    aes(x = condition, y = mean),
+    size = 3.6,
+    shape = 21,
+    fill = "white",
+    stroke = 1
+  ) +
+  labs(
+    x = "Condition (T4 exposure time)",
+    y = "Mean tail length (dish mean)",
+    title = "Dish means per batch (spaghetti) + overall mean ± 95% CI"
+  ) +
+  custom_theme() +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5))
+
+# Spaghetti plot: dish means per batch + overall mean
+spaghetti_plot <- ggplot() +
+  # Batch-specific dish means
+  geom_line(
+    data = dish_stats,
+    aes(x = condition, y = mean_tail, group = replicate_batch),
+    alpha = 0.4, linewidth = 0.8
+  ) +
+  geom_point(
+    data = dish_stats,
+    aes(x = condition, y = mean_tail, shape = replicate_batch),
+    size = 3, alpha = 0.7
+  ) +
+  # Overall mean ± 95% CI
+  geom_errorbar(
+    data = condition_means,
+    aes(x = condition, ymin = ci_lower, ymax = ci_upper),
+    width = 0.15, linewidth = 1
+  ) +
+  geom_line(
+    data = condition_means,
+    aes(x = condition, y = mean, group = 1),
+    linewidth = 1.5
+  ) +
+  geom_point(
+    data = condition_means,
+    aes(x = condition, y = mean),
+    size = 4.5, shape = 21, fill = "white", stroke = 1.5
+  ) +
+  geom_hline(yintercept = 50, linetype = "dashed", color = "#999999", linewidth = 1) +
+  labs(
+    x = "Drug Exposure Duration",
+    y = "Mean Tail Length (% of body)",
+    shape = "Batch",
+    title = "Dish means per batch + overall mean ± 95% CI"
+  ) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5, size = 14),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    legend.position = "right"
+  )
+
+```
+
+### Figures 2E: Embryo-Level Distribution (Half-Violin + Sina)
+
+```{r}
+#| label: t4-tail-distribution_2
+#| fig-width: 12
+#| fig-height: 7
+
+# comparisons
+comparisons <- list(
+  c("Control", "Cond_1"),
+  c("Control", "Cond_2"),
+  c("Control", "Cond_3"),
+  c("Control", "Cond_4"),
+  c("Control", "Cond_5")
+)
+
+# n labels
+n_labels <- condition_totals %>%
+  mutate(
+    label = paste0("n=", total_embryos),
+    y_pos = 37
+  )
+
+tr_plot <- ggplot(T4_tailReg_tidy, aes(x = condition, y = tail_length)) +
+  gghalves::geom_half_violin(
+    aes(fill = condition),
+    side = "l",
+    adjust = 1.3,
+    alpha = 0.7,
+    width = 1,
+    show.legend = FALSE,
+    position = position_nudge(x = -0.15)
+  ) +
+  gghalves::geom_half_boxplot(
+    side = "l",
+    alpha = 0.9,
+    width = 0.2,
+    fill = "white",
+    color = "black",
+    errorbar.draw = FALSE,
+    show.legend = FALSE,
+    outlier.shape = NA,
+    position = position_nudge(x = -0.15)
+  ) +
+  ggforce::geom_sina(
+    aes(fill = condition, shape = replicate_batch),
+    size = 2.5,
+    bin_limit = 1,
+    maxwidth = 0.3,
+    color = "black",
+    alpha = 0.5
+  ) +
+  ggdist::stat_pointinterval(
+    position = position_nudge(x = -0.15),
+    show.legend = FALSE
+  ) +
+  geom_hline(yintercept = 50, linetype = "dashed", color = "#999999", linewidth = 1) +
+  scale_fill_manual(values = color_scheme) +
+  scale_y_continuous(limits = c(35, 150), breaks = c(40, 60, 80, 100), oob = scales::squish) +
+  labs(x = "Drug Exposure Duration", y = "Tail Length (% of body)", shape = "Batch") +
+  custom_theme() +
+  theme(
+    axis.text.x = element_text(size = 14),
+    axis.text.y = element_text(size = 14),
+    axis.title = element_text(size = 16),
+    legend.position = c(0.05, 0.85),
+    legend.background = element_rect(fill = "white", color = "black")
+  ) +
+  geom_text(
+    data = n_labels,
+    aes(x = condition, y = y_pos, label = label),
+    inherit.aes = FALSE,
+    size = 5,
+    vjust = 1.5
+  ) +
+  ggpubr::stat_compare_means(
+    comparisons = comparisons,
+    method = "wilcox.test",
+    label = "p.signif",
+    hide.ns = FALSE,
+    tip.length = 0.01,
+    label.y = c(105, 115, 125, 135, 145)
+  )
+
+tr_plot
+```
+
+```{r}
+#| label: t4-tail-distribution
+#| fig-width: 12
+#| fig-height: 7
+#| out-width: 100%
+
+# comparisons (Control vs each Cond)
+comparisons <- list(
+  c("Control", "Cond_1"),
+  c("Control", "Cond_2"),
+  c("Control", "Cond_3"),
+  c("Control", "Cond_4"),
+  c("Control", "Cond_5")
+)
+
+# stat test (for brackets; fish-level Wilcoxon as a visual aid)
+stat.test <- T4_tailReg_tidy %>%
+  rstatix::wilcox_test(tail_length ~ condition, comparisons = comparisons) %>%
+  rstatix::adjust_pvalue(method = "BH") %>%
+  rstatix::add_significance("p.adj") %>%
+  rstatix::add_xy_position(x = "condition")
+
+
+# n labels (total fish per condition)
+n_df <- T4_tailReg_tidy %>%
+  count(condition, name = "n_fish") %>%
+  mutate(
+    label = paste0("n=", n_fish),
+    y = max(T4_tailReg_tidy$tail_length, na.rm = TRUE) * 1.02
+  )
+
+tr_plot <- ggplot(T4_tailReg_tidy, aes(x = condition, y = tail_length)) +
+      # Violin plot
+
+  gghalves::geom_half_violin(
+    aes(fill = condition),
+    side = "l",
+    adjust = 1.3,
+    alpha = 0.7,
+    width = 1,
+    show.legend = FALSE,
+    position = position_nudge(x = -0.15)
+  ) +
+  gghalves::geom_half_boxplot(
+    side = "l",
+    alpha = 0.9,
+    width = 0.2,
+    fill = "white",
+    color = "black",
+    errorbar.draw = FALSE,
+    show.legend = FALSE,
+    outlier.shape = NA,
+    position = position_nudge(x = -0.15)
+  ) +
+  ggforce::geom_sina(
+    aes(fill = condition, shape = replicate_batch),
+    size = 3,
+    bin_limit = 1,
+    maxwidth = 0.3,
+    color = "black",
+    alpha = 0.35
+  ) +
+  ggdist::stat_pointinterval(
+    position = position_nudge(x = -0.15),
+    show.legend = FALSE
+  ) +
+  scale_fill_manual(values = color_scheme) +
+  labs(x = "", y = "") +
+  custom_theme() +
+  theme(
+    axis.text.x = element_text(size = 16),
+    axis.text.y = element_text(size = 16)
+  ) +
+  geom_text(
+    data = n_df,
+    aes(x = condition, y = y, label = label),
+    inherit.aes = FALSE,
+    size = 5,
+    vjust = 0
+  ) +
+  ggpubr::stat_pvalue_manual(
+    stat.test %>% mutate(p.signif = case_when(
+      p.adj < 0.001 ~ "***",
+      p.adj < 0.01  ~ "**",
+      p.adj < 0.05  ~ "*",
+      TRUE ~ "ns"
+    )),
+    label = "p.signif",
+    tip.length = 0.01,
+    hide.ns = FALSE
+  )
+
+tr_plot
+tr_plot2 <- ggplot(T4_tailReg_tidy, aes(x = fct_inorder(condition), y = tail_length)) +
+    # Violin plot
+    gghalves::geom_half_violin(
+      aes(fill = condition),
+      side = "l",
+      adjust = 1.3,
+      alpha = 0.7,
+      width = 1,
+      show.legend = FALSE,
+      position = position_nudge(x = -0.15)
+    ) +
+    # Boxplot
+    gghalves::geom_half_boxplot(
+      aes(fill = condition),
+      side = "l",
+      alpha = 0.9,
+      width = 0.2,
+      fill = "white",
+      color = "black",
+      errorbar.draw = FALSE,
+      show.legend = FALSE,
+      outlier.shape = NA,
+      position = position_nudge(x = -0.15)
+    ) +
+    # Sina plot (individual points)
+    ggforce::geom_sina(
+      aes(shape = replicate_batch, fill = condition),
+      size = 3,
+      bin_limit = 1,
+      maxwidth = 0.3,
+      color = "black"
+    # fill = "white"
+    # position = position_nudge(x = 0.01)  # Push slightly right
+    ) +
+    # Point interval
+    stat_pointinterval(
+      position = position_nudge(x = -0.15),
+      show.legend = FALSE
+    ) +
+    geom_hline(yintercept = 50, linetype = "dashed", color = "#999999", size = 1) +
+    # Scales and aesthetics
+    scale_y_continuous(limits = c(35, 100), oob = scales::squish) +
+    scale_fill_manual(values = color_scheme) +
+    labs(x = "", y = "") +
+    guides(fill = "none") +
+    custom_theme() +
+    theme(
+      # aspect.ratio = 0.43,
+    # coord_fixed(ratio = 0.67 / 2.4),  # Maintain the same height/width ratio
+      panel.grid.major.x = element_blank(),
+      axis.text.x = element_text(size = 18),
+      axis.text.y = element_text(size = 18),
+      plot.margin = margin(0, 0, 0, 0, "in"),
+      legend.position = c(0.05, 0.5),       
+      legend.background = element_rect(fill = "white", color = "black"),
+      legend.key = element_blank()
+    ) +
+  geom_text(
+    data = n_df,
+    aes(x = condition, y = y, label = label),
+    inherit.aes = FALSE,
+    size = 9,
+    vjust = 1,
+    position = position_nudge(x = -0.05)  # align with the half-violin/box
+  )
+
+
+tr_plot2 +
+  scale_y_continuous(limits = c(35, 150),breaks = c(40, 60, 80, 100),  oob = scales::squish
+  ) +
+  ggpubr::stat_compare_means(
+    comparisons = comparisons,
+    method = "wilcox.test",
+    label = "p.signif",
+    hide.ns = FALSE,
+    tip.length = 0.01,
+    label.y = c(105, 115, 125, 135, 145)
+  )
+
+# Create n= labels for plot
+n_labels <- condition_totals %>%
+  mutate(label = paste0("n=", total_embryos),
+         y_pos = 37)
+
+# Main plot: half-violin + boxplot + individual points
+main_plot <- ggplot(T4_tailReg_tidy, aes(x = condition, y = tail_length)) +
+  # Half violin
+  geom_half_violin(
+    aes(fill = condition),
+    side = "l",
+    adjust = 1.3,
+    alpha = 0.7,
+    width = 1,
+    show.legend = FALSE,
+    position = position_nudge(x = -0.15)
+  ) +
+  # Half boxplot
+  geom_half_boxplot(
+    side = "l",
+    alpha = 0.9,
+    width = 0.2,
+    fill = "white",
+    color = "black",
+    errorbar.draw = FALSE,
+    show.legend = FALSE,
+    outlier.shape = NA,
+    position = position_nudge(x = -0.15)
+  ) +
+  # Individual points (colored by batch)
+  geom_sina(
+    aes(shape = replicate_batch, fill = condition),
+    size = 3,
+    bin_limit = 1,
+    maxwidth = 0.3,
+    color = "black"
+  ) +
+  # Mean + CI
+  stat_pointinterval(
+    position = position_nudge(x = -0.15),
+    show.legend = FALSE
+  ) +
+  # Reference line at 50%
+  geom_hline(yintercept = 50, linetype = "dashed", color = "#999999", linewidth = 1) +
+  # Sample size labels
+  geom_text(
+    data = n_labels,
+    aes(x = condition, y = y_pos, label = label),
+    inherit.aes = FALSE,
+    size = 5,
+    vjust = 1,
+    position = position_nudge(x = -0.05)
+  ) +
+  scale_y_continuous(limits = c(35, 100), oob = scales::squish) +
+  scale_fill_manual(values = color_scheme) +
+  labs(x = "Drug Exposure Duration", 
+       y = "Tail Length (% of body)",
+       shape = "Batch") +
+  guides(fill = "none") +
+  theme(
+    axis.text.x = element_text(size = 14),
+    axis.text.y = element_text(size = 14),
+    axis.title = element_text(size = 16),
+    legend.position = c(0.05, 0.85),
+    legend.background = element_rect(fill = "white", color = "black"),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10)
+  )
+
+# Version with significance brackets
+plot_with_sig <- main_plot +
+  scale_y_continuous(limits = c(35, 150), breaks = c(40, 60, 80, 100), oob = scales::squish) +
+  stat_compare_means(
+    comparisons = comparisons,
+    method = "wilcox.test",
+    label = "p.signif",
+    hide.ns = FALSE,
+    tip.length = 0.01,
+    label.y = c(105, 115, 125, 135, 145)
+  )
+```
+
+## Save Outputs
+
+```{r}
+if (SAVE_OUTPUTS) {
+  # ---- figures ----
+  ggsave(opath("T4_tail_distribution.svg"), tr_plot, width = 12, height = 7)
+  ggsave(opath("T4_tail_dish_means_spaghetti.svg"), spaghetti_plot, width = 12, height = 7)
+
+  CairoPDF(opath("T4_tail_distribution.pdf"), width = 12, height = 7)
+  print(tr_plot)
+  dev.off()
+
+  CairoPDF(opath("T4_tail_dish_means_spaghetti.pdf"), width = 12, height = 7)
+  print(spaghetti_plot)
+  dev.off()
+
+  # ---- tables ----
+  readr::write_csv(dish_stats, opath("T4_tail_dish_stats.csv"))
+  readr::write_csv(condition_means, opath("T4_tail_condition_means.csv"))
+  readr::write_csv(as.data.frame(contrasts_dish), opath("T4_tail_contrasts_vs_control_dish.csv"))
+  readr::write_csv(as.data.frame(contrasts_mixed), opath("T4_tail_contrasts_vs_control_fish_lmer.csv"))
+
+  message("\nOutputs saved to: ", out_dir)
+}
+```
+
+## Session Info
+
+```{r}
+sessionInfo()
+```

@@ -1,0 +1,670 @@
+---
+title: "Thyroid Inhibitor Effects on Metamorphosis"
+author: "Andrea Mariossi"
+format:
+  html:
+    embed-resources: true
+    toc: true
+    toc-location: left
+    toc-depth: 5
+    code-fold: false
+    code-line-numbers: true
+    page-layout: article
+    grid:
+      sidebar-width: 100px
+      body-width: 2000px
+      margin-width: 100px
+      gutter-width: 3.5rem
+execute:
+  echo: true
+  warning: false
+  message: true
+fig-width: 12
+fig-height: 8
+fig-align: center
+fig-format: png
+editor_options:
+  chunk_output_type: inline
+---
+
+## Experimental Design
+
+**Objective:** Test the effect of thyroid hormone inhibitors (goidrogens) on metamorphosis by measuring tail regression.
+
+**Design:**
+
+\- **Conditions:** 4 (Control, Perchlorate, Methimazole, Iopanoic Acid)
+
+\- **Biological replicates:** Multiple independent experiments (biorep)
+
+\- **Response variable:** regression percentages were grouped into four bins (0–30%, 30–50%, 50–80%, and 80–100%)
+
+\- **Measurement:** Count of larvae in each tail regression category per condition × bioreps.
+
+## Setup
+
+```{r setup}
+rm(list = ls())
+
+# ---- packages ----
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(readxl)
+  library(ggpubr)
+  library(knitr)
+  library(kableExtra)
+  library(rstatix)
+  library(emmeans)
+  library(Cairo)
+  library(patchwork)
+  library(scales)
+})
+```
+
+## Data path
+
+```{r data-loadin}
+# ---- paths ----
+data_dir <- file.path("..", "source_data")
+out_dir  <- file.path("..", "output")
+
+# Uncomment for local absolute path:
+# data_dir <- "/Users/andrea/Library/CloudStorage/GoogleDrive-andrea.mariossi@gmail.com/My Drive/4.paper_archive/2025_thyroid_pathway_&_metamorphosis/04.SciAdv_rev/source_data/"
+
+SAVE_OUTPUTS <- FALSE
+if (!dir.exists(out_dir)) dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+
+# helpers
+dpath <- function(...) file.path(data_dir, ...)
+opath <- function(...) file.path(out_dir, ...)
+
+```
+
+## Theme & Style
+
+```{r theme-setup}
+# ---- theme & style ----
+custom_theme <- function() {
+  theme(
+    axis.ticks = element_line(linewidth = 0.5),
+    axis.ticks.length = unit(0.09, "cm"),
+    legend.key.height = unit(20, "pt"),
+    axis.line = element_blank(),
+    panel.border = element_rect(colour = "black", fill = NA, linewidth = 1),
+    panel.background = element_blank(),
+    plot.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    legend.background = element_blank(),
+    legend.box.background = element_blank(),
+    legend.key = element_blank(),
+    strip.background = element_blank()
+  )
+}
+
+theme_set(theme_pubr(base_size = 13, base_family = "Helvetica") + custom_theme())
+
+# ---- condition order ----
+cond_levels <- c("Control","Cond_1","Cond_2","Cond_3","Cond_4","Cond_5")
+
+# ---- color palette ----
+
+# Custom color palettes
+palette_teal_orange <- scale_fill_manual(values = c(
+  "#66c2a5",  
+  "#fc8d62", 
+  "#8da0cb", 
+  "#DDCC77"  
+))
+
+# For tail regression categories
+tail_colors <- c(
+  "0-30%"    = "#f37749", 
+  "30-50%"   = "#faf7b4",
+  "50-80%"   = "#70d2ca",
+  "80-100%"  = "#f3f3f4"  
+)
+
+# For conditions
+condition_colors <- c(
+  "control"        = "#e78ac3",
+  "perchlorate"    = "#117733",
+  "methimazole"    = "#332288",
+  "iopanoic acid"  = "#88CCEE"
+)
+
+# ---- p-value formatting function ----
+format_pvalues <- function(df) {
+  df %>%
+    mutate(across(
+      any_of(c("p.value", "p.adj", "adj.p.value")),
+      ~ case_when(
+        . < 0.001 ~ format(., scientific = TRUE, digits = 2),
+        TRUE ~ as.character(round(., 4))
+      )
+    ))
+}
+```
+
+## Data load & Preprocessing
+
+```{r data-tidy}}
+# ---- dataset ----
+data_file <- "10_inhibitors_metamorphosis_day1.xlsx"
+stopifnot(file.exists(dpath(data_file)))
+
+# ---- tidy df ----
+drugInhibitor.df <- read_excel(dpath(data_file)) %>%
+  rename_with(tolower) %>%
+  mutate(
+    condition = factor(condition, levels = c("control", "perchlorate", "methimazole", "iopanoic acid")),
+    tail.regression = factor(tail.regression, levels = c("0-30%", "30-50%", "50-80%", "80-100%")),
+    biorep = factor(biorep)
+  )
+
+cat("\n=== DATA STRUCTURE ===\n")
+cat("Conditions:", levels(drugInhibitor.df$condition), "\n")
+cat("Tail regression categories:", levels(drugInhibitor.df$tail.regression), "\n")
+cat("Number of biological replicates:", n_distinct(drugInhibitor.df$biorep), "\n")
+cat("Total observations:", nrow(drugInhibitor.df), "\n\n")
+
+# Ppeview
+drugInhibitor.df %>%
+  head(10) %>%
+  kable(caption = "Drug inhibitor data (first 10 rows)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+# ---- n embryos x condition  ----
+drugInhibitor.df |>
+  group_by(condition) |>
+  summarise(total_embryos = sum(n, na.rm = TRUE), .groups = "drop")  %>%
+  kable(caption = "n embryos x condition") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+
+```
+
+## Calculate Percentages
+
+```{r data-transformation}
+# ---- percentages within each condition × biorep ----
+drug_percent <- drugInhibitor.df %>%
+  group_by(condition, biorep) %>%
+  mutate(total = sum(n),
+          n_reps = n(),
+          se_n =sd(n) / sqrt(n_reps), 
+         percent = n / total * 100) %>%
+  ungroup()
+
+drug_percent %>%
+  select(condition, biorep, tail.regression, n, total, percent) %>%
+  kable(caption = "Percentages by condition, biorep, and tail regression category") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+# ---- summary counts ----
+counts_stats <- drug_percent %>%
+  group_by(condition, tail.regression) %>%
+  summarise(mean_n = mean(n),
+            range_n = paste0(min(n), "–", max(n)),
+            se_n   = sd(n) / sqrt(n()),
+            .groups = "drop")
+counts_stats
+
+# ---- summary statistics ----
+summary_stats <- drug_percent %>%
+  group_by(condition, tail.regression) %>%
+    summarise(
+    n_reps = n(), # number of observations
+    mean_pct = mean(percent), # Mean percentage
+    sd_pct = sd(percent), # Standard deviation
+    se_pct = sd_pct / sqrt(n_reps), #  Standard error
+    min_pct = min(percent),
+    max_pct = max(percent),
+    .groups = "drop"
+  )
+
+summary_stats %>%
+  kable(caption = "Summary statistics: mean % ± SE per condition and tail regression category",
+        digits = 2) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+
+## Statistical Analysis
+
+### Chi-Square Analysis: Overall Distribution Test
+
+**Question:** Do the drugs change the overall tail-regression distribution across bins (0–30, 30–50, 50–80, 80–100)?
+
+```{r chisq-overall}
+
+# ---- chi-square test: condition × tail regression ----
+# contingency table (aggregate across bioreps)
+count_table <- drugInhibitor.df %>%
+  group_by(condition, tail.regression) %>%
+  summarise(total_n = sum(n), .groups = "drop") %>%
+  pivot_wider(names_from = tail.regression, values_from = total_n, values_fill = 0)
+
+count_table %>%
+  kable(caption = "Contingency table: condition × tail regression") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+# Convert to matrix for chi-square test
+count_matrix <- count_table %>%
+  select(-condition) %>%
+  as.matrix()
+rownames(count_matrix) <- count_table$condition
+ 
+# Overall chi-square test
+chisq_result <- chisq.test(count_matrix)
+cat("\n=== Chi-Square Test ===\n")
+print(chisq_result)
+
+# Effect size (Cramér's V)
+V_overall <- sqrt(as.numeric(chisq_result$statistic) /
+                  (sum(count_matrix) * min(nrow(count_matrix) - 1, ncol(count_matrix) - 1)))
+cat("\nCramér's V:", round(V_overall, 3), "\n")
+
+# Standardized residuals (which cells drive the effect)
+stdres_overall <- as.data.frame(as.table(chisq_result$stdres)) %>%
+  rename(condition = Var1, bin = Var2, stdres = Freq) %>%
+  arrange(desc(abs(stdres)))
+
+stdres_overall %>%
+  kable(caption = "Standardized residuals (sorted by magnitude)", digits = 2) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+# Residual Heatmap
+ggplot(stdres_overall, aes(x = bin, y = condition, fill = stdres)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(stdres, 1)), size = 5) +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  labs(
+    x = "Tail Regression Bin",
+    y = "Condition",
+    fill = "Std. Residual",
+    title = "Standardized Residuals: Which cells drive the overall chi-square?"
+  ) 
+
+```
+
+## Bin Proportions
+
+```{r}
+# Calculate top-bin proportion and ordinal mean using bin midpoints
+bin_midpoints <- c("0-30%" = 15, "30-50%" = 40, "50-80%" = 65, "80-100%" = 90)
+
+descriptive_summary <- as.data.frame(count_matrix) %>%
+  tibble::rownames_to_column("condition") %>%
+  mutate(
+    n = rowSums(across(where(is.numeric))),
+    top_bin_prop = `80-100%` / n,
+    mean_pct = (
+      `0-30%` * bin_midpoints["0-30%"] +
+      `30-50%` * bin_midpoints["30-50%"] +
+      `50-80%` * bin_midpoints["50-80%"] +
+      `80-100%` * bin_midpoints["80-100%"]
+    ) / n
+  ) %>%
+  select(condition, n, mean_pct, top_bin_prop) %>%
+  arrange(desc(mean_pct))
+
+descriptive_summary %>%
+  mutate(
+    mean_pct = round(mean_pct, 1),
+    top_bin_prop = scales::percent(top_bin_prop, accuracy = 0.1)
+  ) %>%
+  kable(caption = "Descriptive summary: ordinal mean & proportion with 80-100% regression") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+| Condition     | Mean %  | 80-100% bin | Interpretation                           |
+|---------------|---------|-------------|------------------------------------------|
+| Control       | \~78.6% | 69.8%       | Normal metamorphosis                     |
+| Perchlorate   | \~42.9% | 2.8%        | **Severe inhibition** (strongest effect) |
+| Methimazole   | \~59.0% | 9.2%        | Moderate inhibition                      |
+| Iopanoic Acid | \~61.1% | 11.6%       | Moderate inhibition                      |
+
+### Pairwise Chi-Square Tests
+
+**Question:** Which pairs of conditions differ in their bin distributions?
+
+```{r pairwise-chisq}
+
+# -----------------------
+# Pairwise overall-shift tests (each is 2x4)
+
+pairs <- combn(rownames(count_matrix), 2, simplify = FALSE)
+
+pairwise_results <- map_dfr(pairs, function(p) {
+  sub <- count_matrix[p, , drop = FALSE]
+  tst <- chisq_test(sub)
+  
+  tibble(
+    group1 = p[1],
+    group2 = p[2],
+    statistic = tst$statistic,
+    df = tst$df,
+    p = tst$p,
+    cramer_v = cramer_v(sub),
+    method    = tst$method
+  )
+}) %>%
+  mutate(p.adj = p.adjust(p, method = "holm")) %>%
+  arrange(p.adj)
+
+## this if you dont use rstatix package
+  # tst <- chisq.test(sub)               # use fisher.test(sub) if you prefer. to kee pfor preference
+  # tibble(
+  #   group1 = p[1],
+  #   group2 = p[2],
+  #   statistic = unname(tst$statistic),
+  #   p = tst$p.value,
+  #   method = tst$method
+  # )
+  
+pairwise_results %>%
+  format_pvalues() %>%
+  kable(caption = "Pairwise chi-square tests (Holm-adjusted)", digits = 3) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+
+## QC
+
+### Dispersion in Biological Replicate
+
+```{r}
+#| label: qc-biorep
+#| message: false
+#| warning: false
+#| fig-height: 10
+#| fig-width: 14
+
+# Counts by condition
+p_rep_a <- ggplot(drugInhibitor.df, aes(x = tail.regression, y = n, fill = condition)) +
+  geom_col(position = "dodge") +
+  facet_wrap(~ biorep) +   # split by replicate
+  labs(x = "", y = "Count", fill = "Condition") +
+  scale_fill_manual(values = condition_colors, name = "Condition") +
+  theme(legend.position = "bottom")
+
+  # pd <- position_dodge(width = 0.9)
+
+# ggplot(drug_percent, aes(x = interaction(tail.regression, biorep, sep = " | "),
+#                          y = n, fill = condition)) +
+#   geom_col(position = pd, width = 0.9) +
+#   labs(x = "", y = "Count", fill = "Condition") +
+#   scale_fill_manual(values = condition_colors, name = "Condition") +
+#   theme(legend.position = "bottom") +
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# % by condition
+p_rep_b <- ggplot(drug_percent, aes(x = condition, y = percent, fill = tail.regression)) +
+  geom_col(position = "stack", color = "black") +
+  facet_wrap(~ biorep, ncol =2) +
+  scale_fill_manual(values = tail_colors, name = "Tail Regression") +
+  scale_y_continuous(labels = function(x) paste0(x, "%")) +
+  labs(y = "% of Larvae") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10),legend.position = "bottom")
+
+p_rep_c <- drug_percent %>%
+  ggboxplot(x = "condition", 
+            y = "percent",
+            fill = "tail.regression",
+            palette = "RdYlBu",
+            ylab = "% Tail Regression",
+            xlab = "") +
+  scale_y_continuous(limits = c(0, 100)) +
+  scale_fill_manual(values = tail_colors, name = "Tail Regression") +
+  theme(legend.position = "none")
+
+### Confidence Intervals for Proportions
+# Calculate Wilson 95% confidence intervals
+df_ci <- as.data.frame(as.table(count_matrix)) %>%
+  rename(condition = Var1, bin = Var2, n = Freq) %>%
+  group_by(condition) %>%
+  mutate(
+    N = sum(n),
+    prop = n / N,
+    z = qnorm(0.975),
+    denom = 1 + (z^2) / N,
+    center = (prop + (z^2) / (2 * N)) / denom,
+    half = (z * sqrt((prop * (1 - prop)) / N + (z^2) / (4 * N^2))) / denom,
+    lo = pmax(0, center - half),
+    hi = pmin(1, center + half)
+  ) %>%
+  ungroup()
+
+p_ci <- ggplot(df_ci, aes(x = condition, y = prop, fill = bin)) +
+  geom_col(position = position_dodge(width = 0.9)) +
+  geom_errorbar(
+    aes(ymin = lo, ymax = hi),
+    position = position_dodge(width = 0.9),
+    width = 0.2
+  ) +
+  scale_y_continuous(labels = percent_format()) +
+  scale_fill_manual(values = tail_colors) +
+  labs(x = "", y = "Proportion (±95% CI)", fill = "Tail Regression",
+    # title = "Bin Proportions with 95% Confidence Intervals"
+  ) +
+  theme(legend.position = "none")
+
+p_rep_a + p_rep_b + p_rep_c + p_ci +
+  plot_annotation(title = "Counts & %: tail Regression distribution by Biological Replicate",
+                   theme = theme(plot.title = element_text(size = 22, hjust = 0.5, face="bold"))) +
+   plot_layout(guides = 'collect')
+```
+
+### Overall effect - Proportional bar plot
+
+```{r}
+#| label: stacked-proportions
+#| fig-width: 10
+#| fig-height: 6
+
+# Counts by condition
+pd <- position_dodge(width = 0.9)
+p_cond_a <- ggplot(counts_stats, aes(x = tail.regression, y = mean_n, fill = condition)) +
+  geom_col(position = pd, width = 0.9) +
+  geom_errorbar(aes(ymin = pmax(0, mean_n - se_n), ymax = mean_n + se_n, group = condition),position = pd, width = 0.2) +
+  labs(x = "", y = "Count", fill = "Condition") +
+  scale_fill_manual(values = condition_colors, name = "Condition") +
+  theme(legend.position = "top")
+
+#-------------------------------------------------------------------------------
+# Summary Plot with Error Bars x counts
+p_cond_b <- drugInhibitor.df %>% 
+  ggbarplot(x = "condition", 
+            y = "n", 
+            add = "mean_se", 
+            color = "tail.regression", 
+            palette = "RdYlBu",
+            label = TRUE, 
+            lab.col = "black", 
+            lab.pos = "in")
+
+p_cond_a + p_cond_b
+# # scale to 100% using ggbarplot
+# drugInhibitor.df %>%
+#   group_by(condition, biorep) %>%
+#   mutate(percent = round(n * 100 / sum(n, na.rm = TRUE), 1)) %>%
+#   ggbarplot(x = "condition", y = "percent", add = "mean_se", error.plot = "errorbar", width = 0.5,
+#             ylab = "% tail regression", xlab = "Drug", color = "black", fill = "tail.regression", 
+#             # color = "tail.regression", 
+#             palette = "RdYlBu", label = TRUE, lab.col = "black", lab.size = 5, lab.pos = "in", 
+#             lab.nb.digit = 1) +
+#   scale_y_continuous(labels = scales::percent_format(scale = 1), breaks = c(25, 50, 75, 100)) +
+#   theme(legend.position = "bottom") 
+```
+
+## Figure S10 A: Stacked Bar Plot with Error Bars
+
+```{r main-stacked-plot}
+
+# cumulative positions for error bars
+summary_for_plot <- summary_stats %>%
+  group_by(condition) %>%
+  arrange(tail.regression) %>%
+  mutate(
+    # Cumulative positions (reversed for proper stacking)
+    ymax_cumul = cumsum(mean_pct),
+    ymin_cumul = lag(ymax_cumul, default = 0),
+    ymid_cumul = (ymin_cumul + ymax_cumul) / 2
+  ) %>%
+  ungroup()
+
+#  p-values for each treatment vs control from pairwise_results
+pval_annotations <- pairwise_results %>%
+  filter(group1 == "control") %>%
+  mutate(
+    label = case_when(
+      p.adj < 0.001 ~ "***",
+      p.adj < 0.01 ~ "**",
+      p.adj < 0.05 ~ "*",
+      TRUE ~ "ns"
+    ),
+    condition = group2,
+    y_pos = 105
+  ) %>%
+  select(condition, label, y_pos)
+
+
+# stacked bar plot
+p_main <- ggplot(summary_for_plot, aes(x = condition, fill = tail.regression)) +
+  # Stacked bars
+  geom_col(
+    aes(y = mean_pct),
+    position = position_stack(reverse = TRUE),
+    color = "black",
+    width = 0.6,
+    linewidth = 0.3
+  ) +
+  # Error bars
+  geom_errorbar(
+    aes(
+      ymin = ymin_cumul + mean_pct - se_pct,
+      ymax = ymin_cumul + mean_pct + se_pct
+    ),
+    width = 0.18,
+    color = "black",
+    linewidth = 0.5
+  ) +
+  # Labels
+  geom_text(
+    aes(y = ymid_cumul, label = sprintf("%.1f%%", mean_pct)),
+    color = "black",
+    size = 4
+  ) +
+   # Add significance asterisks
+  geom_text(
+    data = pval_annotations,
+    aes(x = condition, y = y_pos, label = label, fill = NULL),
+    size = 6,
+    fontface = "bold"
+  ) +
+  # Styling
+  scale_fill_manual(values = tail_colors, name = "Tail regression progression") +
+  scale_y_continuous(
+    labels = function(x) paste0(x, "%"),
+    # labels = scales::percent_format(scale = 1),
+    breaks = seq(0, 100, 25),
+    expand = expansion(mult = c(0, 0.05))
+  ) +
+  scale_x_discrete(
+    breaks = c("control", "perchlorate", "methimazole", "iopanoic acid"),
+    labels = c("Control", "Perc", "MMI", "IPA")
+  ) +
+  labs(y = "Proportion") +
+  theme(
+    legend.position = "bottom",
+    axis.text.x = element_text(size = 12, margin = margin(t = 2)),
+    panel.spacing.x = unit(0.1, "cm"),  # Tighter than 0.2
+    aspect.ratio = 1.2  # Original: 1. Makes plot wider/shorter
+  )
+  # coord_cartesian(clip = "off") +
+  # custom_theme() 
+
+p_main 
+ 
+```
+
+#### Extra plot on High Regression (80-100%)
+
+```{r  anova-plot-high-regression}
+#| label: boxplot-high-regression
+#| fig-width: 10
+#| fig-height: 6
+
+
+high_regression <- drug_percent %>%
+  filter(tail.regression == "80-100%")
+
+# ANOVA
+fit_high <- lm(percent ~ condition, data = high_regression)
+
+cat("\n=== ANOVA: % with 80-100% Tail Regression ===\n")
+print(anova(fit_high))
+
+# Post-hoc contrasts vs control
+emm_high <- emmeans(fit_high, ~ condition)
+contrasts_high <- summary(
+  contrast(emm_high, method = "trt.vs.ctrl", ref = "control"),
+  adjust = "BH",
+  infer = TRUE
+)
+
+contrasts_high %>%
+  as.data.frame() %>%
+  format_pvalues() %>%
+  kable(caption = "Contrasts vs Control (80-100% regression; BH adjusted)", digits = 2) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+# Comparison groups for statistics
+comparisons <- list(
+  c("control", "perchlorate"),
+  c("control", "methimazole"),
+  c("control", "iopanoic acid")
+)
+
+# High regression bin (80-100%)
+ggplot(high_regression, aes(x = condition, y = percent, fill = condition)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+  geom_jitter(width = 0.2, size = 2, alpha = 0.6) +
+  scale_fill_manual(values = condition_colors) +
+  labs(
+    x = "Treatment Condition",
+    y = "% Larvae with 80-100% Tail Regression",  ) +
+  stat_compare_means(
+    comparisons = comparisons,
+    method = "t.test",
+    label = "p.signif"
+  ) +
+  guides(fill = "none") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Save Outputs
+
+```{r save-outputs}
+if (SAVE_OUTPUTS) {
+  # ---- figures ----
+  ggsave(opath("inhibitor_stacked_bars.svg"), p_stacked, width = 10, height = 6)
+  ggsave(opath("inhibitor_faceted_bioreps.svg"), p_faceted, width = 14, height = 8)
+  ggsave(opath("inhibitor_high_regression_boxplot.svg"), p_box_high, width = 10, height = 6)
+  ggsave(opath("inhibitor_combined_figure.svg"), combined_plot, width = 14, height = 10)
+  
+  # PDFs
+  CairoPDF(opath("inhibitor_combined_figure.pdf"), width = 14, height = 10)
+  print(combined_plot)
+  dev.off()
+  
+  message("\nOutputs saved to: ", out_dir)
+}
+```
+
+## Session Info
+
+```{r}
+sessionInfo()
+```

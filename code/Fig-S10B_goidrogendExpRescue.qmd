@@ -1,0 +1,898 @@
+---
+title: "Perchlorate and T4 rescue"
+author: "Andrea Mariossi"
+format:
+  html:
+    embed-resources: true
+    toc: true
+    toc-location: left
+    toc-depth: 5
+    code-fold: false
+    code-line-numbers: true
+    page-layout: article
+    grid:
+      sidebar-width: 100px
+      body-width: 2000px
+      margin-width: 100px
+      gutter-width: 3.5rem
+execute:
+  echo: true
+  warning: false
+  message: true
+fig-width: 18
+fig-height: 10
+fig-align: center
+fig-format: png
+out-width: "90%"
+editor_options:
+  chunk_output_type: inline
+---
+
+**Normal metamorphosis progression:** - Swimming → Attach (lv_noTR) → Tail regression → Body rotation (jv_wBodyRotation)
+
+Developmental stages/phenotypes rather than tail regression bins:
+
+-   `jv_wBodyRotation`: Juveniles with body rotation (normal endpoint for control at this stage)
+-   `tailed_jv`: Tailed juveniles (abnormal - drug-induced defect)
+-   `lv_noTR`: Larva attached after swimming but no tail regression
+-   `swimming`: Swimming larvae
+
+## Setup
+
+```{r setup, message=FALSE, warning=FALSE}
+rm(list = ls())
+
+# ---- packages ----
+suppressPackageStartupMessages({library(tidyverse)
+library(rstatix)
+library(ggpubr)
+library(knitr)
+library(kableExtra)
+library(scales)
+library(patchwork)
+library(emmeans)
+})
+
+```
+
+## Configuration
+
+```{r}
+# ---- path configuration ----
+# Script lives in /code, data lives in /source_data
+data_dir <- file.path("..", "source_data")
+out_dir  <- file.path("..", "output")
+SAVE_OUTPUTS <- TRUE 
+
+if (!dir.exists(out_dir)) dir.create(out_dir, showWarnings = FALSE)
+
+# Path helpers
+dpath <- function(...) file.path(data_dir, ...)
+opath <- function(...) file.path(out_dir, ...)
+
+```
+
+## Theme & Style
+
+```{r theme}
+
+# ---- theme & style ----
+custom_theme <- function() {
+  theme(
+    axis.ticks = element_line(linewidth = 0.5),
+    axis.ticks.length = unit(0.09, "cm"),
+    legend.key.height = unit(20, "pt"),
+    axis.line = element_blank(),
+    panel.border = element_rect(colour = "black", fill = NA, linewidth = 1),
+    panel.background = element_blank(),
+    plot.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    legend.background = element_blank(),
+    legend.box.background = element_blank(),
+    legend.key = element_blank(),
+    strip.background = element_blank()
+  )
+}
+
+theme_set(theme_pubr(base_size = 13, base_family = "Helvetica") + custom_theme())
+no_legend <- theme(legend.position = "none")
+
+# ---- color palette ----
+
+# Color palette for developmental stages
+stage_colors <- c(
+  "jv_wBodyRotation" = "#8f817e",  
+  "tailed_jv"        = "#ded4c8", 
+  "lv_noTR"          = "#c49f9a",  
+  "swimming"         = "#e4c2c9"  
+)
+
+# Condition colors
+condition_colors <- c(
+  "control"        = "#999999",
+  "perchlorate"    = "#66c2a5",
+  "perchlorate_T4" = "#8da0cb"
+)
+
+# ---- pretty p-values for kable ----
+format_pvalues <- function(df) {
+  df %>%
+    mutate(across(
+      any_of(c("p.value", "p.value.x", "p.value.y", "adj.p.value")),
+      ~ case_when(
+        . < 0.001 ~ format(., scientific = TRUE, digits = 2),
+        TRUE ~ as.character(round(., 4))
+      )
+    ))
+}
+```
+
+## Data Loading & tidy
+
+```{r data-prep}
+
+# Load data
+stage_data <- readxl::read_excel(dpath("11_inhibitors_metamorphosis_rescue.xlsx")) |> 
+  mutate(
+    condition = factor(condition, levels = c("control", "perchlorate", "perchlorate_T4")),
+    bioRep = factor(bioRep)
+  )
+# stage_data <- tibble(
+#   condition = c(rep("control", 6), rep("perchlorate", 6), rep("perchlorate_T4", 6)),
+#   bioRep = rep(1:6, 3),
+#   jv_wBodyRotation = c(43, 58, 55, 61, 39, 66,  # control
+#                        29, 35, 16, 14, 23, 30,  # perchlorate
+#                        41, 33, 26, 23, 25, 34), # perchlorate_T4
+#   tailed_jv = c(1, 0, 0, 0, 0, 0,
+#                 5, 6, 13, 6, 9, 25,
+#                 4, 2, 0, 1, 11, 7),
+#   lv_noTR = c(6, 5, 2, 4, 1, 0,
+#               2, 5, 24, 4, 15, 19,
+#               14, 6, 9, 7, 16, 2),
+#   swimming = c(8, 5, 2, 8, 1, 8,
+#                14, 18, 21, 13, 22, 9,
+#                9, 5, 4, 13, 4, 8)
+# ) %>%
+  # mutate(
+  #   condition = factor(condition, levels = c("control", "perchlorate", "perchlorate_T4")),
+  #   bioRep = factor(bioRep)
+  # )
+
+# Convert to long format
+stage_long <- stage_data %>%
+  pivot_longer(cols = c(jv_wBodyRotation, tailed_jv, lv_noTR, swimming), names_to = "stage", values_to = "n") %>%
+  mutate(stage = factor(stage, levels = c("swimming", "lv_noTR", "tailed_jv", "jv_wBodyRotation")))
+
+# Calculate percentages
+stage_percent <- stage_long %>%
+  group_by(condition, bioRep) %>%
+  mutate(total = sum(n),
+         percent = n / total * 100) %>%
+  ungroup()
+
+# Display data structure
+cat("=== DATA STRUCTURE ===\n")
+cat("Conditions:", paste(levels(stage_long$condition), collapse = ", "), "\n")
+cat("Developmental stages:", paste(levels(stage_long$stage), collapse = ", "), "\n")
+cat("Number of biological replicates per condition:", n_distinct(stage_long$bioRep), "\n\n")
+
+# Preview
+stage_long %>%
+  head(12) %>%
+  kable(caption = "Stage data (first 12 rows)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+
+# Summary Statistics
+
+```{r summary-stats}
+summary_stats <- stage_percent %>%
+  group_by(condition, stage) %>%
+  dplyr::summarise(
+    n_reps = n(),
+    mean_pct = mean(percent),
+    sd_pct = sd(percent),
+    se_pct = sd_pct / sqrt(n_reps),
+    .groups = "drop"
+  )
+
+summary_stats %>%
+  kable(caption = "Summary statistics: mean % ± SE per condition and stage", digits = 1) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+
+```{r biological-metrics}
+# Calculate biologically meaningful metrics
+biological_summary <- summary_stats %>%
+  select(condition, stage, mean_pct) %>%
+  pivot_wider(names_from = stage, values_from = mean_pct) %>%
+  mutate(
+    # Normal complete metamorphosis (most advanced)
+    pct_normal_complete = jv_wBodyRotation,
+    
+    # Arrested at early stages (swimming + lv_noTR)
+    pct_arrested = swimming + lv_noTR,
+    
+    # Drug-induced malformation during tail regression
+    pct_malformed = tailed_jv,
+    
+    # Pre-metamorphic (not yet attached)
+    pct_premetamorphic = swimming,
+    
+    # Attached but incomplete (lv_noTR + tailed_jv)
+    pct_attached_incomplete = lv_noTR + tailed_jv
+  ) %>%
+  select(condition, pct_normal_complete, pct_arrested, pct_malformed, 
+         pct_premetamorphic, pct_attached_incomplete)
+
+biological_summary %>%
+  mutate(across(where(is.numeric), ~round(., 1))) %>%
+  kable(caption = "Biological interpretation of phenotypes", digits = 1) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+cat("\n=== KEY DEVELOPMENTAL OUTCOMES ===\n")
+cat("Control: ", round(biological_summary$pct_normal_complete[1], 1), 
+    "% complete metamorphosis (normal endpoint)\n")
+cat("Perchlorate: ", round(biological_summary$pct_normal_complete[2], 1), 
+    "% complete (", 
+    round(biological_summary$pct_normal_complete[1] - biological_summary$pct_normal_complete[2], 1), 
+    "% reduction)\n")
+cat("Perchlorate+T4: ", round(biological_summary$pct_normal_complete[3], 1), 
+    "% complete (", 
+    round(biological_summary$pct_normal_complete[3] - biological_summary$pct_normal_complete[2], 1), 
+    "% improvement)\n\n")
+
+cat("ARREST AT EARLY STAGES:\n")
+cat("Control: ", round(biological_summary$pct_arrested[1], 1), "%\n")
+cat("Perchlorate: ", round(biological_summary$pct_arrested[2], 1), "% (+", 
+    round(biological_summary$pct_arrested[2] - biological_summary$pct_arrested[1], 1), "%)\n")
+cat("Perchlorate+T4: ", round(biological_summary$pct_arrested[3], 1), "% (", 
+    round(biological_summary$pct_arrested[3] - biological_summary$pct_arrested[2], 1), "%)\n\n")
+
+cat("MALFORMATIONS (tailed_jv):\n")
+cat("Control: ", round(biological_summary$pct_malformed[1], 1), "% (baseline)\n")
+cat("Perchlorate: ", round(biological_summary$pct_malformed[2], 1), "% (drug-induced)\n")
+cat("Perchlorate+T4: ", round(biological_summary$pct_malformed[3], 1), "%\n")
+```
+
+# Statistical Analysis: Chi-Square Tests
+
+The data is compositional (sum to total animals per replicate), statistical approach: **Chi-square test**
+
+Does perchlorate disrupt development? (yes from previus figure S10A) BUT
+
+Does T4 rescue the effect? (partial return to normal distribution)
+
+```{r stat_overview}
+# Three pairwise chi-squares tell the whole story
+
+# 1. Does perchlorate differ from control?
+# ├─ Test: Control vs Perchlorate chi-square
+#    → YES (p < 0.05) means there's an effect
+
+# 2.Does T4 reverse the perchlorate effect?
+# ├─ Test: Perchlorate vs Perchlorate+T4 chi-square  
+#    → YES (p < 0.05) means T4 has a rescue effect
+
+# 3. Is the rescue complete?
+# ├─ Test: Control vs Perchlorate+T4 chi-square
+#    → NO (p > 0.05) = COMPLETE rescue (T4 restores to control level)
+#    → YES (p < 0.05) = PARTIAL rescue  (T4 helps but not fully)
+
+```
+
+## Overall Test
+
+**Question:** Do the treatments alter the distribution of developmental stages?
+
+```{r chisq-overall}
+# contingency table
+count_table <- stage_long %>%
+  group_by(condition, stage) %>%
+  summarise(total_n = sum(n), .groups = "drop") %>%
+  pivot_wider(names_from = stage, values_from = total_n, values_fill = 0)
+
+count_table %>%
+  kable(caption = "Contingency table: condition × stage") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+# Convert to matrix
+count_matrix <- count_table %>%
+  # select(-condition) %>%
+  column_to_rownames("condition") %>%
+  as.matrix()
+# rownames(count_matrix) <- count_table$condition
+
+# Chi-square test
+chisq_result <- chisq.test(count_matrix)
+cat("\n=== Chi-Square Test (Overall) ===\n")
+print(chisq_result)
+
+# Effect size (Cramér's V)
+V_overall <- sqrt(as.numeric(chisq_result$statistic) /
+                  (sum(count_matrix) * min(nrow(count_matrix) - 1, ncol(count_matrix) - 1)))
+cat("\nCramér's V:", round(V_overall, 3), "\n")
+
+# Standardized residuals
+stdres_overall <- as.data.frame(as.table(chisq_result$stdres)) %>%
+  rename(condition = Var1, stage = Var2, stdres = Freq) %>%
+  arrange(desc(abs(stdres)))
+
+stdres_overall %>%
+  kable(caption = "Standardized residuals (cells driving the effect)", digits = 2) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+# Standardized residuals
+stdres_overall <- as.data.frame(as.table(chisq_result$stdres)) %>%
+  rename(condition = Var1, stage = Var2, stdres = Freq) %>%
+  arrange(desc(abs(stdres))) %>%
+  mutate(
+    interpretation = case_when(
+      condition == "control" & stage == "jv_wBodyRotation" & stdres > 0 ~ 
+        "Control has MORE normal metamorphosis (expected)",
+      condition == "perchlorate" & stage == "jv_wBodyRotation" & stdres < 0 ~ 
+        "Perchlorate has LESS normal metamorphosis",
+      condition == "perchlorate" & stage == "swimming" & stdres > 0 ~ 
+        "Perchlorate has MORE pre-metamorphic arrest",
+      condition == "perchlorate" & stage == "tailed_jv" & stdres > 0 ~ 
+        "Perchlorate has MORE malformations",
+      abs(stdres) > 2 & stdres > 0 ~ "More than expected",
+      abs(stdres) > 2 & stdres < 0 ~ "Less than expected",
+      TRUE ~ "Near expected"
+    )
+  )
+
+stdres_overall %>%
+  kable(caption = "Standardized residuals: which stages drive differences", digits = 2) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+
+# Calculate key metrics
+descriptive_summary <- as.data.frame(count_matrix) %>%
+  tibble::rownames_to_column("condition") %>%
+  mutate(
+    n = rowSums(across(where(is.numeric))),
+    # Proportion in most developed stage
+    swimming_prop = swimming / n,
+    # Proportion in least developed stage
+    rotation_prop = jv_wBodyRotation / n,
+    # Ordinal score (higher = more developed)
+    # Assign scores: rotation=1, tailed=2, lv_noTR=3, swimming=4
+    dev_score = (jv_wBodyRotation * 1 + tailed_jv * 2 + lv_noTR * 3 + swimming * 4) / n
+  ) %>%
+  select(condition, n, rotation_prop, swimming_prop, dev_score) %>%
+  arrange(desc(dev_score))
+
+descriptive_summary %>%
+  mutate(
+    rotation_prop = percent(rotation_prop, accuracy = 0.1),
+    swimming_prop = percent(swimming_prop, accuracy = 0.1),
+    dev_score = round(dev_score, 2)
+  ) %>%
+  kable(caption = "Descriptive summary: key developmental metrics") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+## Residual Heatmap
+
+```{r residual-heatmap, fig.width=10, fig.height=5}
+ggplot(stdres_overall, aes(x = stage, y = condition, fill = stdres)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(stdres, 1)), size = 5) +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  scale_x_discrete(labels = c("JV w/\nRotation", "Tailed\nJV", "LV\nNo TR", "Swimming")) +
+  labs(x = "Developmental Stage",y = "Condition",fill = "Std. Residual") +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5))
+```
+
+## Pairwise Comparisons: T4 Rescue Analysis
+
+```{r pairwise-chisq}
+# Pairwise 2×4 chi-square tests
+pairs <- combn(rownames(count_matrix), 2, simplify = FALSE)
+
+pairwise_results <- map_dfr(pairs, function(p) {
+  sub <- count_matrix[p, , drop = FALSE]
+  tst <- chisq_test(sub)
+  
+  tibble(
+    group1 = p[1],
+    group2 = p[2],
+    statistic = tst$statistic,
+    df = tst$df,
+    p = tst$p,
+    cramer_v = cramer_v(sub)
+  )
+}) %>%
+  mutate(p.adj = p.adjust(p, method = "holm")) %>%
+  arrange(p.adj)
+
+# Add interpretations for rescue analysis
+rescue_interpretation <- pairwise_results %>%
+  mutate(
+    test_type = case_when(
+      group1 == "control" & group2 == "perchlorate" ~ 
+        "1. Perchlorate Effect",
+      group1 == "perchlorate" & group2 == "perchlorate_T4" ~ 
+        "2. T4 Rescue",
+      group1 == "control" & group2 == "perchlorate_T4" ~ 
+        "3. Rescue Completeness"
+    ),
+    result = ifelse(p.adj < 0.05, "Significant", "Not Significant"),
+    interpretation = case_when(
+      test_type == "1. Perchlorate Effect" & result == "Significant" ~ 
+        "Perchlorate significantly disrupts metamorphosis",
+      test_type == "2. T4 Rescue" & result == "Significant" ~ 
+        "T4 significantly reverses perchlorate-induced disruption",
+      test_type == "2. T4 Rescue" & result == "Not Significant" ~ 
+        "T4 does NOT rescue perchlorate effects",
+      test_type == "3. Rescue Completeness" & result == "Not Significant" ~ 
+        "COMPLETE rescue: T4 fully restores to control levels",
+      test_type == "3. Rescue Completeness" & result == "Significant" ~ 
+        "PARTIAL rescue: T4 improves but doesn't fully restore to control"
+    )
+  )
+
+rescue_interpretation %>%
+  # select(test_type, group1, group2, cramer_v, p.adj, result, interpretation) %>%
+  mutate(p = format(p, scientific = TRUE, digits = 2),
+         p.adj = format(p.adj, scientific = TRUE, digits = 2) ) %>%
+  kable(caption = "T4 Rescue Analysis: Chi-Square Pairwise Test", digits = 3) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+## 
+
+| Condition      | Mean % Swimming | Mean % JV w/ Rotation |
+|----------------|-----------------|-----------------------|
+| Control        | \~13%           | \~73%                 |
+| Perchlorate    | \~33%           | \~25%                 |
+| Perchlorate+T4 | \~14%           | \~60%                 |
+
+## QC
+
+### Biological Replicate Variation
+
+```{r qc-facets, fig.width=12, fig.height=8}
+ggplot(stage_percent, aes(x = condition, y = percent, fill = stage)) +
+  geom_col(position = "stack", color = "black") +
+  facet_wrap(~ bioRep, ncol = 3) +
+  scale_fill_manual(
+    values = stage_colors,
+    name = "Developmental Stage",
+    labels = c("JV w/ Rotation", "Tailed JV", "LV No TR", "Swimming")
+  ) +
+  scale_y_continuous(labels = function(x) paste0(x, "%")) +
+  labs(
+    x = "Condition",
+    y = "% of Animals",
+    title = "Developmental Stage Distribution by Biological Replicate"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "bottom"
+  )
+```
+
+## S10B: Stacked Bar Plot with Statistics
+
+```{r main-plot, fig.height=7, fig.width=10}
+#| message: false
+
+# # Vertical
+# summary_for_plot <- summary_stats %>%
+#   group_by(condition) %>%
+#   arrange(stage) %>%
+#   mutate(
+#     ymax_cumul = cumsum(mean_pct),
+#     ymin_cumul = lag(ymax_cumul, default = 0),
+#     ymid_cumul = (ymin_cumul + ymax_cumul) / 2
+#   ) %>%
+#   ungroup()
+# 
+# # Extract p-values for annotations
+# pval_annotations <- pairwise_results %>%
+#   filter(group1 == "control") %>%
+#   mutate(
+#     significance = case_when(
+#       p.adj < 0.001 ~ "***",
+#       p.adj < 0.01 ~ "**",
+#       p.adj < 0.05 ~ "*",
+#       TRUE ~ "ns"
+#     ),
+#     condition = factor(group2, levels = c("perchlorate", "perchlorate_T4")),
+#     y_pos = 103
+#   )
+
+# horizontal
+# Set plotting order (bottom -> top after coord_flip)
+summary_for_plot <- summary_stats %>%
+  mutate(condition = factor(condition, levels = c("perchlorate_T4", "perchlorate", "control"))) %>%
+  group_by(condition) %>%
+  arrange(stage) %>%
+  mutate(
+    ymax_cumul = cumsum(mean_pct),
+    ymin_cumul = lag(ymax_cumul, default = 0),
+    ymid_cumul = (ymin_cumul + ymax_cumul) / 2
+  ) %>%
+  ungroup()
+
+# Make sure annotations use the same factor levels
+pval_annotations <- pairwise_results %>%
+  filter(group1 == "control") %>%
+  mutate(
+    significance = case_when(
+      p.adj < 0.001 ~ "***",
+      p.adj < 0.01 ~ "**",
+      p.adj < 0.05 ~ "*",
+      TRUE ~ "ns"
+    ),
+    condition = factor(group2, levels = c("perchlorate_T4", "perchlorate", "control")),
+    y_pos = 103
+  )
+
+
+# Main plot
+p_main <- ggplot(summary_for_plot, aes(x = condition, fill = stage)) +
+  geom_col(
+    aes(y = mean_pct),
+    position = position_stack(reverse = TRUE),
+    color = "black",
+    width = 0.6,
+    linewidth = 0.3
+  ) +
+  geom_errorbar(
+    aes(
+      ymin = ymin_cumul + mean_pct - se_pct,
+      ymax = ymin_cumul + mean_pct + se_pct
+    ),
+    width = 0.18,
+    color = "black",
+    linewidth = 0.5
+  ) +
+  geom_text(
+    aes(y = ymid_cumul, label = sprintf("%.1f%%", mean_pct)),
+    color = "black",
+    size = 4
+  ) +
+  # Add significance annotations
+  geom_text(
+    data = pval_annotations,
+    aes(x = condition, y = y_pos, label = significance, fill = NULL),
+    size = 6,
+    fontface = "bold",
+    inherit.aes = FALSE
+  ) +
+  scale_fill_manual(
+    values = stage_colors,
+    name = "Developmental Stage",
+    labels = c("JV w/ Body Rotation", "Tailed JV", "LV No TR", "Swimming")
+  ) +
+  scale_y_continuous(
+    labels = function(x) paste0(x, "%"),
+    breaks = seq(0, 100, 25),
+    limits = c(0, 108),
+    expand = expansion(mult = c(0, 0))
+  ) +
+  scale_x_discrete(labels = c("Control", "Perchlorate", "Perchlorate\n+ T4")) +
+  labs(x = "",y = "% individuals") +
+  custom_theme()  +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(size = 12))
+
+ 
+p_main + 
+  coord_flip() +
+  scale_x_discrete(labels = c(
+  control = "Control",
+  perchlorate = "Perchlorate",
+  perchlorate_T4 = "Perchlorate\n+ T4"
+))
+
+```
+
+### extra stats:
+
+### ANOVA & Contrasts but on each category
+
+```{r anova-normal}
+
+# Consolidated phenotype groupings for ANOVA
+phenotype_groups <- stage_percent %>%
+  group_by(condition, bioRep) %>%
+  summarise(
+    normal = percent[stage == "jv_wBodyRotation"],
+    malformed = percent[stage == "tailed_jv"],
+    arrested = sum(percent[stage %in% c("swimming", "lv_noTR")]),
+    .groups = "drop"
+  )
+
+summary_stage_percent <- stage_percent %>%
+  group_by(condition) %>%
+  summarise(
+    mean = mean(percent),
+    se = sd(percent) / sqrt(n()),
+    .groups = "drop"
+  )
+
+# Statistical modeling on % Normal Metamorphosi
+fit_normal <- lm(normal ~ condition, data = phenotype_groups)
+emm_normal <- emmeans(fit_normal, ~ condition)
+
+# Custom contrasts
+rescue_contrasts <- list(
+  "Perc_Effect" = c(1, -1, 0),  # Control vs Perchlorate
+  "T4_Rescue"   = c(0, -1, 1), # Perchlorate vs Perchlorat+T4
+  "Completeness" = c(1, 0, -1) # Control vs Perchlorate+T4
+)
+
+contrast_results <- contrast(emm_normal, rescue_contrasts, adjust = "none") %>% 
+  as.data.frame()
+
+contrast_results  %>%
+  mutate(
+      sig = case_when(
+      p.value < 0.001 ~ "***",
+      p.value < 0.01  ~ "**",
+      p.value < 0.05  ~ "*",
+      TRUE ~ "ns"
+    ),
+    interpretation = case_when(
+      contrast == "Perc_Effect" & estimate > 0 & p.value < 0.05 ~ 
+        "Perchlorate REDUCES normal metamorphosis",
+      contrast == "T4_Rescue" & estimate > 0 & p.value < 0.05 ~ 
+        "T4 INCREASES normal metamorphosis vs perchlorate",
+      contrast == "Completeness" & p.value > 0.05 ~ 
+        "COMPLETE rescue (T4 = Control)",
+      contrast == "Completeness" & p.value < 0.05 ~ 
+        "PARTIAL rescue (T4 ≠ Control, still reduced)"
+    )
+  ) %>%
+  kable(caption = "Contrasts on % Normal Complete Metamorphosis", digits = 3) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+
+### Arrested Development (swimming + lv_noTR)
+
+```{r anova-arrested}
+# Calculate combined arrested phenotype
+fit_arrested <- lm(arrested ~ condition, data = phenotype_groups)
+
+cat("\n=== ANOVA: % Arrested Development (swimming + lv_noTR) ===\n")
+print(anova(fit_arrested))
+
+# Contrasts
+emm_arrested <- emmeans(fit_arrested, ~ condition)
+contrast_arrested <- as.data.frame(contrast(emm_arrested, rescue_contrasts, adjust = "none"))
+
+contrast_arrested %>%
+  mutate(
+    sig = case_when(
+      p.value < 0.001 ~ "***",
+      p.value < 0.01  ~ "**",
+      p.value < 0.05  ~ "*",
+      TRUE ~ "ns"
+    ),
+    interpretation = case_when(
+      contrast == "Perc_Effect" & estimate < 0 & p.value < 0.05 ~
+        "Perchlorate INCREASES developmental arrest",
+      contrast == "T4_Rescue" & estimate < 0 & p.value < 0.05 ~
+        "T4 REDUCES developmental arrest",
+      contrast == "Completeness" & p.value >= 0.05 ~
+        "COMPLETE rescue",
+      contrast == "Complete Rescue?" & p.value < 0.05 ~
+        "PARTIAL rescue"
+    )
+  ) %>%
+  kable(digits = 3, caption = "Contrasts on % Arrested Development") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+
+## E: Boxplots: Key Phenotypes
+
+```{r}
+# comparisons <- list(
+#   c("control", "perchlorate"),
+#   c("perchlorate", "perchlorate_T4"),
+#   c("control", "perchlorate_T4")
+# )
+# 
+# normal_data <- stage_percent %>%
+#   filter(stage == "jv_wBodyRotation")
+# 
+# malformed_data <- stage_percent %>%
+#   filter(stage == "tailed_jv")
+# 
+# arrested_data <- stage_percent %>%
+#   filter(stage %in% c("swimming", "lv_noTR")) %>%
+#   group_by(condition, bioRep) %>%
+#   summarise(percent = sum(percent), .groups = "drop")
+# 
+# 
+# # Normal complete metamorphosis
+# p_normal <- ggplot(normal_data, aes(x = condition, y = percent, fill = condition)) +
+#   geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+#   geom_jitter(width = 0.2, size = 2.5, alpha = 0.6) +
+#   scale_fill_manual(values = condition_colors) +
+#   scale_x_discrete(labels = c("Control", "Perc", "Perc+T4")) +
+#   labs(
+#     x = "Treatment",
+#     y = "% Normal Complete\nMetamorphosis",
+#     title = "Normal Endpoint"
+#   ) +
+#   stat_compare_means(
+#     comparisons = comparisons,
+#     method = "t.test",
+#     label = "p.signif",
+#     size = 3
+#   ) +
+#   guides(fill = "none") +
+#   theme_minimal(base_size = 12)
+# 
+# # Malformations
+# p_malformed <- ggplot(malformed_data, aes(x = condition, y = percent, fill = condition)) +
+#   geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+#   geom_jitter(width = 0.2, size = 2.5, alpha = 0.6) +
+#   scale_fill_manual(values = condition_colors) +
+#   scale_x_discrete(labels = c("Control", "Perc", "Perc+T4")) +
+#   labs(
+#     x = "Treatment",
+#     y = "% Malformations\n(Abnormal TR)",
+#     title = "Drug-Induced Defects"
+#   ) +
+#   stat_compare_means(
+#     comparisons = comparisons,
+#     method = "t.test",
+#     label = "p.signif",
+#     size = 3
+#   ) +
+#   guides(fill = "none") +
+#   theme_minimal(base_size = 12)
+# 
+# # Arrested development
+# p_arrested <- ggplot(arrested_data, aes(x = condition, y = percent, fill = condition)) +
+#   geom_boxplot(outlier.shape = NA, alpha = 0.7) +
+#   geom_jitter(width = 0.2, size = 2.5, alpha = 0.6) +
+#   scale_fill_manual(values = condition_colors) +
+#   scale_x_discrete(labels = c("Control", "Perc", "Perc+T4")) +
+#   labs(
+#     x = "Treatment",
+#     y = "% Arrested\nDevelopment",
+#     title = "Metamorphic Arrest"
+#   ) +
+#   stat_compare_means(
+#     comparisons = comparisons,
+#     method = "t.test",
+#     label = "p.signif",
+#     size = 3
+#   ) +
+#   guides(fill = "none") +
+#   theme_minimal(base_size = 12)
+# 
+# # Combined
+# p_boxplots <- p_normal + p_malformed + p_arrested +
+#   plot_annotation(
+#     title = "T4 Rescue Effects on Metamorphic Phenotypes",
+#     theme = theme(plot.title = element_text(size = 14, face = "bold"))
+#   )
+# 
+# p_boxplots
+
+
+# summary_plot_data <- stage_percent %>%
+#   group_by(condition, stage) %>%
+#   summarise(mean_pct = mean(percent), se_pct = sd(percent)/sqrt(n()), .groups = "drop") %>%
+#   group_by(condition) %>%
+#   mutate(cum_pct = cumsum(mean_pct), ymid = cum_pct - (mean_pct/2))
+# 
+
+# Faceted Boxplots
+p_boxes <- phenotype_groups %>%
+  pivot_longer(cols = c(normal, malformed, arrested), names_to = "metric", values_to = "val") %>%
+  ggplot(aes(x = condition, y = val, fill = condition)) +
+  geom_boxplot(alpha = 0.5, outlier.shape = NA) +
+  geom_jitter(width = 0.1) +
+  facet_wrap(~metric, scales = "free_y") +
+  scale_fill_manual(values = condition_colors) +
+  custom_theme() +
+  labs(title = "T4 Rescue Effects on Metamorphic Phenotypes")
+
+ p_boxes
+ 
+ final_table <- phenotype_groups %>%
+  group_by(condition) %>%
+  summarise(
+    `Normal (%)` = paste0(round(mean(normal), 1), " ± ", round(sd(normal)/sqrt(n()), 1)),
+    `Malformed (%)` = paste0(round(mean(malformed), 1), " ± ", round(sd(malformed)/sqrt(n()), 1)),
+    `Arrested (%)` = paste0(round(mean(arrested), 1), " ± ", round(sd(arrested)/sqrt(n()), 1))
+  ) %>%
+  mutate(
+    `P-value (vs Control)` = c("-", 
+                               format.pval(contrast_results$p.value[1], digits = 2), 
+                               format.pval(contrast_results$p.value[3], digits = 2))
+  )
+
+kable(final_table, align = "lcccc", booktabs = TRUE, 
+      caption = "Table 1. Effects of Perchlorate and T4 Rescue on Metamorphic Outcomes (Mean ± SEM)") %>%
+  kable_styling(full_width = FALSE, position = "center") %>%
+  add_header_above(c(" " = 1, "Phenotype Distribution" = 3, "Stats" = 1))
+
+
+```
+
+# Interpretation
+
+```{r summary}
+
+cat("\n╔═══════════════════════════════════════════════════════════════╗\n")
+cat("║           T4 RESCUE ANALYSIS - FINAL SUMMARY                  ║\n")
+cat("╚═══════════════════════════════════════════════════════════════╝\n\n")
+
+cat("PHENOTYPE DISTRIBUTIONS:\n")
+cat("───────────────────────────────────────────────────────────────\n")
+cat("% Normal Complete Metamorphosis (jv_wBodyRotation):\n")
+cat("  Control:         ", sprintf("%5.1f%%", summary_stage_percent$mean_pct[1]), "\n")
+cat("  Perchlorate:     ", sprintf("%5.1f%%", summary_stage_percent$mean_pct[2]), 
+    " (", sprintf("%+.1f%%", summary_stage_percent$mean_pct[2] - summary_stage_percent$mean_pct[1]), ")\n")
+cat("  Perchlorate+T4:  ", sprintf("%5.1f%%", summary_stage_percent$mean_pct[3]), 
+    " (", sprintf("%+.1f%%", summary_stage_percent$mean_pct[3] - summary_stage_percent$mean_pct[2]), " vs Perc)\n\n")
+
+cat("CHI-SQUARE PAIRWISE TESTS:\n")
+cat("───────────────────────────────────────────────────────────────\n")
+perc_effect <- rescue_interpretation %>% filter(test_type == "1. Perchlorate Effect")
+t4_rescue <- rescue_interpretation %>% filter(test_type == "2. T4 Rescue")
+rescue_complete <- rescue_interpretation %>% filter(test_type == "3. Rescue Completeness")
+
+cat("1. Control vs Perchlorate:\n")
+cat("   ", perc_effect$interpretation, "\n")
+cat("   p =", format(perc_effect$p.adj, scientific = TRUE, digits = 2), 
+    ", Cramér's V =", round(perc_effect$cramer_v, 3), "\n\n")
+
+cat("2. Perchlorate vs Perchlorate+T4:\n")
+cat("   ", t4_rescue$interpretation, "\n")
+cat("   p =", format(t4_rescue$p.adj, scientific = TRUE, digits = 2), 
+    ", Cramér's V =", round(t4_rescue$cramer_v, 3), "\n\n")
+
+cat("3. Control vs Perchlorate+T4:\n")
+cat("   ", rescue_complete$interpretation, "\n")
+cat("   p =", format(rescue_complete$p.adj, scientific = TRUE, digits = 2), 
+    ", Cramér's V =", round(rescue_complete$cramer_v, 3), "\n\n")
+
+# Calculate rescue efficiency
+deficit <- summary_stage_percent$mean_pct[1] - summary_stage_percent$mean_pct[2]
+recovery <- summary_stage_percent$mean_pct[3] - summary_stage_percent$mean_pct[2]
+rescue_pct <- (recovery / deficit) * 100
+
+cat("RESCUE EFFICIENCY:\n")
+cat("───────────────────────────────────────────────────────────────\n")
+cat("Perchlorate-induced deficit:  ", sprintf("%5.1f%%", deficit), "\n")
+cat("T4-mediated recovery:          ", sprintf("%5.1f%%", recovery), "\n")
+cat("Rescue efficiency:             ", sprintf("%5.1f%%", rescue_pct), "\n")
+cat("(T4 restored ", sprintf("%.1f%%", rescue_pct), 
+    " of the perchlorate-induced deficit)\n\n")
+
+cat("CONCLUSION:\n")
+cat("───────────────────────────────────────────────────────────────\n")
+if(rescue_complete$p.adj > 0.05) {
+  cat("✓ T4 COMPLETELY rescues perchlorate-induced metamorphic arrest\n")
+  cat("  (Perchlorate+T4 statistically indistinguishable from Control)\n")
+} else {
+  cat("→ T4 PARTIALLY rescues perchlorate-induced metamorphic arrest\n")
+  cat("  (Perchlorate+T4 improved but still differs from Control)\n")
+  cat("  Rescue efficiency: ", sprintf("%.1f%%", rescue_pct), "\n")
+}
+
+cat("\n")
+```
+
+# Session Info
+
+```{r session-info}
+sessionInfo()
+```

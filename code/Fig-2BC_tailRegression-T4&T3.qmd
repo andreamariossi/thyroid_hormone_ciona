@@ -1,33 +1,50 @@
 ---
-title: "Fig-2 tail retaction t4"
-format: html
-engine: knitr
-editor: visual
-grid: 
-  sidebar-width: 100px
-  body-width: 2000px
-  margin-width: 100px
-  gutter-width: 3.5rem
+title: "Fig-2BC_tail regression- T4 & T3"
+author: "Andrea Mariossi"
+
+format:
+  html:
+    embed-resources: true
+    toc: true
+    toc-location: left
+    toc-depth: 5
+    code-fold: false
+    code-line-numbers: true
+    page-layout: article
+    grid:
+      sidebar-width: 100px
+      body-width: 2000px
+      margin-width: 100px
+      gutter-width: 3.5rem
+
 execute:
-  fig-align: center
-  fig-format: svg
+  echo: true
+  warning: false
+  message: true
+
+fig-width: 18
+fig-height: 10
+fig-align: center
+fig-format: png
+out-width: "90%"
+
+editor_options:
+  chunk_output_type: inline
 ---
 
-## Tail regression: T4 & T3
+-   **Inputs** come either from my local folder or from the repository’s folder (when downloaded from GitHub).
+-   **Outputs** of GitHub are written to a new local folder named `output_rerun/`
 
-```{r}
+## Setup
+
+```{r setup}
+#| include: false
+
 rm(list = ls())
-knitr::opts_chunk$set(
-  echo = TRUE,
-  fig.width = 18,
-  fig.height = 10,
-  fig.align = "center",
-  out.width = "70%",
-  column = "page"
-)
-
 # Package loading
 suppressPackageStartupMessages({
+  library(here)
+  library(Cairo)
   # Data manipulation & file import
   library(tidyverse)
   library(readxl)
@@ -35,23 +52,81 @@ suppressPackageStartupMessages({
   library(rstatix)
   library(ggpubr)
   library(knitr)
-  library(Cairo)
   library(lme4)
   library(lmerTest)
   library(emmeans)
   library(kableExtra)
   library(patchwork)
-  })
-
+})
 ```
 
-## Data Loading and Preprocessing
+## Configuration
 
-```{r}
-# ===== path =====
-file_path <- "/Users/andrea/Princeton Dropbox/Andrea Mariossi/4.paper_archive/2025_thyroid_pathway_&_metamorphosis/3.1.ScienceAdvances_submission_rev/tables/"
+```{r config}
+################################################################################
+# ---- Configuration ----
+################################################################################
 
-# ===== theme & style =====
+pick_pipeline <- "my_local"  # "my_local" or "github"
+
+# ---- My paths (inputs + outputs) ----
+file_path <- "/Users/andrea/Library/CloudStorage/GoogleDrive-andrea.mariossi@gmail.com/My Drive/4.paper_archive/2025_thyroid_pathway_&_metamorphosis/04.SciAdv_rev/source_data"
+
+# ---- Pipeline switch ----
+if (pick_pipeline == "my_local") {
+  
+  # Inputs from my local folder
+  data_dir <- file_path
+  out_dir  <- file.path(file_path, "output")
+  save_outputs <- TRUE
+  
+} else if (pick_pipeline == "github") {
+  
+  # ---- GitHub repo paths ----
+  # By opening `thyroid_hormone_ciona.Rproj` in RStudio, `here()` finds the project root
+  repo_dir <- here::here()
+  
+  # Fallback: if you downloaded the repo as a zip and unzipped it
+  if (!dir.exists(file.path(repo_dir, "data"))) {
+    repo_dir_try <- normalizePath(path.expand("~/Downloads/thyroid_hormone_ciona-main"), mustWork = FALSE)
+    if (dir.exists(file.path(repo_dir_try, "data"))) {
+      repo_dir <- repo_dir_try
+    } else {
+      stop("Cannot find repo 'data/' folder.\n",
+           "  → Open the .Rproj file in RStudio, OR\n",
+           "  → Set working directory to repo root with setwd(), OR\n",
+           "  → Unzip thyroid_hormone_ciona-main.zip and update the path above.")
+    }
+  }
+  
+  data_dir <- file.path(repo_dir, "data")
+  out_dir  <- file.path(repo_dir, "output_rerun")
+  save_outputs <- TRUE
+  
+  # Uncomment line below to NOT save outputs when running from GitHub:
+  # save_outputs <- FALSE
+}
+
+# ---- Path helper functions ----
+dpath <- function(...) file.path(data_dir, ...)
+opath <- function(...) file.path(out_dir, ...)
+
+# Only create output dir when actually saving
+if (save_outputs) dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+
+# ---- Configuration summary ----
+message("─────────────────────────────────────────")
+message("Pipeline: ", pick_pipeline)
+message("Data dir (inputs): ", data_dir)
+if (exists("repo_dir")) message("Repo dir: ", repo_dir)
+message("Save outputs: ", save_outputs)
+if (save_outputs) message("Output dir: ", out_dir)
+message("─────────────────────────────────────────")
+
+################################################################################
+# ---- Theme & Style ----
+################################################################################
+
 custom_theme <- function() {
   theme(
     axis.ticks = element_line(linewidth = 0.5),
@@ -66,24 +141,29 @@ custom_theme <- function() {
     legend.background = element_blank(),
     legend.box.background = element_blank(),
     legend.key = element_blank(),
-    strip.background = element_blank(),
+    strip.background = element_blank()
   )
 }
 
-# ===== set theme =====
-theme_set(theme_pubr(base_size = 13,
-                     base_family = "Helvetica") + custom_theme())
+# If using Arial font (optional)
+# library(showtext)
+# library(sysfonts)
+# sysfonts::font_add("Arial", regular = "/Library/Fonts/Arial.ttf")  # macOS 
+# # sysfonts::font_add("Arial", regular = "C:/Windows/Fonts/arial.ttf")  # Windows
+# showtext_auto()
+# theme_set(theme_pubr(base_size = 13, base_family = "Arial") + custom_theme())
 
-# ===== extra bits =====
+theme_set(theme_pubr(base_size = 13, base_family = "sans") + custom_theme())
+
+# Extra styling
 no_legend <- theme(legend.position = "none")
 axis_text_45 <- theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
 
-# ===== color palette =====
+# Color palette
 contPalette <- paletteer_c("ggthemes::Red-Green-Gold Diverging", 30)
-
 stage_order <- c("earTII", "midTII", "latTII", "latTIII", "larva")
 
-# ===== pretty p-values for kable =====
+# Pretty p-values for kable
 format_pvalues <- function(df) {
   df %>%
     mutate(across(any_of(c("p.value", "p.value.x", "p.value.y", "adj.p.value")), 
@@ -94,24 +174,28 @@ format_pvalues <- function(df) {
 }
 ```
 
-```{r}
-speedTail <- read_excel(paste0(file_path,"5_tail_retraction_T4_T3.xlsx"))
+## Data Loading and Preprocessing
 
-# speedTail <- read_excel(paste0(file_path,"Desktop/table_submission.xlsx"), 
-#                           sheet = "tail_retraction_T4_T3") 
+this add extra space in rendereing #\| column: page
 
+all setting here: <https://quarto.org/docs/reference/formats/html.html?utm_source=chatgpt.com#layout>
+
+```{r load_data}
+
+# Load data
+xlsx_file <- dpath("6_tail_retraction_T4_T3.xlsx")
+stopifnot(file.exists(xlsx_file))
+
+speedTail <- read_excel(xlsx_file)
 colnames(speedTail) <- tolower(colnames(speedTail))
 
-# __________________________________________________________________________
-# quick plot. + stat
-
-# Define  levels and comparisons
+# Define treatment levels and comparisons
 treatment_levels <- c('Control', '70nM', '140nM', '600nM')
 control_comparisons <- list(c("Control", "70nM"),
                             c("Control", "140nM"),
                             c("Control", "600nM"))
 
-# Corrected processing function
+# Processing function
 process_timepoint <- function(data, suffix) {
   selected_cols <- data %>% dplyr::select(ends_with(suffix))
   renamed_cols <- selected_cols %>% rename_with(~str_remove(., paste0("_", suffix)))
@@ -132,13 +216,12 @@ T4_6hpf |> glimpse()
 T3_8hpf |> glimpse()
 ```
 
-## Descriptive info
+## Descriptive Info
 
-```{r}
-
+```{r descriptive}
 # Total larvae across all experiments
 speedTail |>
-  summarise(
+  dplyr::summarise(
     n_total = sum(!is.na(length_a)) +
       sum(!is.na(length_b)) +
       sum(!is.na(length_c)) +
@@ -155,57 +238,55 @@ speedTail_long <- speedTail |>
     names_pattern = "(experiment|replicate|group_treatment|length)_([a-d])"
   )
 
-## larva numbers: replicate x experiment
+# Larva numbers: replicate x experiment
 speedTail_long |>
   filter(!is.na(length)) |>
-  count(experiment, group_treatment, replicate, name = "n_individuals")
+  dplyr::count(experiment, group_treatment, replicate, name = "n_individuals")
 
-## larva numbers: experiment
+# Larva numbers: experiment
 speedTail_long |>
   filter(!is.na(length)) |>
-  summarise(n_individuals = n(), .by = c(experiment, group_treatment))
+  dplyr::summarise(n_individuals = n(), .by = c(experiment, group_treatment))
 
-## count replicates numbers
+# dplyr::count replicates numbers
 speedTail_long |>
   filter(!is.na(length)) |>
-  summarise(n_individuals = n(), .by = experiment)
+  dplyr::summarise(n_individuals = n(), .by = experiment)
 
-#------ labels for plot ------
-
-# n labels for sets _a,_b, _c, _d
+# N labels for plots
 n_a <- speedTail_long %>%
   filter(set == "a", !is.na(length)) %>%
-  count(group_treatment) %>%
+  dplyr::count(group_treatment) %>%
   mutate(label = paste0("n=", n), y = 130)
 
 n_b <- speedTail_long %>%
   filter(set == "b", !is.na(length)) %>%
-  count(group_treatment) %>%
+  dplyr::count(group_treatment) %>%
   mutate(label = paste0("n=", n), y = 130)
 
 n_c <- speedTail_long %>%
   filter(set == "c", !is.na(length)) %>%
-  count(group_treatment) %>%
+  dplyr::count(group_treatment) %>%
   mutate(label = paste0("n=", n), y = 130)
 
 n_d <- speedTail_long %>%
   filter(set == "d", !is.na(length)) %>%
-  count(group_treatment) %>%
+  dplyr::count(group_treatment) %>%
   mutate(label = paste0("n=", n), y = 130)
 ```
 
-## stat analysis
+## Statistical Analysis
 
-```{r}
+```{r stats}
 
 # -------------------------------------
-# stat_analysis: anova over +/- drug
+# stat_analysis: ANOVA over +/- drug
 # ------------------------------------- 
 
-# moving to tidyverse and map 
 timepoint_list <- list(T4_6hpf, T4_8hpf, T4_24hpf, T3_8hpf)
 names(timepoint_list) <- c("T4_6hpf", "T4_8hpf", "T4_24hpf", "T3_8hpf")
 
+# moving to tidyverse approach and map 
 stat_results <- map(timepoint_list, ~{
   list(
     anova = aov(length ~ group_treatment, data = .x),
@@ -214,6 +295,7 @@ stat_results <- map(timepoint_list, ~{
   )
 })
 
+# View results
 stat_results$T4_6hpf$anova
 stat_results$T4_6hpf$tukey
 stat_results$T4_6hpf$cohens_d
@@ -236,22 +318,19 @@ stat_results$T4_24hpf$cohens_d
 # plots <- imap(processed_data, ~create_plot(.x, paste("Timepoint:", str_remove(.y, "a"))))
 # ggarrange(plotlist = plots, ncol = 2, nrow = 2)
 
-
-
-
 ```
 
-## quick visualisation
+## Quick Visualization
 
-```{r}
+```{r quick_viz}
 #| fig-width: 16
 #| fig-height: 10
 #| out-width: 100%
 
 # -------------------------------------
-# quick assesment plot
+# quick assessment plot using ANOVA and Tukey's test
 # ------------------------------------- 
-# Just using ANOVA and Tukey's test to compare the control group with all drug []
+# control group vs all drug []
 
 create_plot <- function(data, title) {
   # Calculate Tukey results
@@ -276,10 +355,10 @@ create_plot <- function(data, title) {
   y_start <- y_max + (0.1 * y_range)
   step <- 0.08 * y_range
   
-  # simple plot
+  # Simple plot
   p <- ggplot(data, aes(x = factor(group_treatment, levels = treatment_levels), 
-                       y = length, 
-                       fill = group_treatment)) +
+                        y = length, 
+                        fill = group_treatment)) +
     geom_boxplot(width = 0.6, alpha = 0.7) +
     geom_jitter(width = 0.1, size = 2, shape = 21) +
     scale_fill_brewer(palette = "Set2") +
@@ -287,7 +366,7 @@ create_plot <- function(data, title) {
     custom_theme() +
     theme(legend.position = "none",
           plot.title = element_text(hjust = 0.5, face = "bold")) +
-    # Expand top margin for significance markers
+    # expand top margin for significance markers
     scale_y_continuous(expand = expansion(mult = c(0.05, 0.15))) 
   
   # Statistical comparisons 
@@ -297,7 +376,7 @@ create_plot <- function(data, title) {
       annotations = tukey_res$p.signif[i],
       y_position = y_start + (i-1)*step,
       tip_length = 0.01,
-      vjust = 0.5,  # Center text vertically
+      vjust = 0.5,
       textsize = 4
     )
   }
@@ -311,16 +390,18 @@ plot_24hpf <- create_plot(T4_24hpf, "T4 - 24 hpf")
 plot_T3 <- create_plot(T3_8hpf, "T3 - 8 hpf")
 
 # Arrange plots
-plot_6hpf + plot_8hpf + plot_24hpf + plot_T3 + plot_layout(guides = "collect") & theme(legend.position = 'bottom')
-
+plot_6hpf + plot_8hpf + plot_24hpf + plot_T3 + 
+  plot_layout(guides = "collect") & 
+  theme(legend.position = 'bottom')
 ```
 
-Panel paper
+## Panel 2B,C
 
-```{r }
+```{r paper_panel}
 #| fig-width: 12
 #| fig-height: 7
 #| out-width: 100%
+
 # _____________________________________________________________________
 # Plot with significance bars
 # _____________________________________________________________________
@@ -328,8 +409,10 @@ Panel paper
 # geom_signif that I used in the upper cell works okay if I don’t reverse the y-axis; when I do, it fails, and honestly it’s just faster to add the line manually than to troubleshoot it.
 
 # colors
-custom_colors_T4 <- c("Control" = "#bdd7e7", "70nM" = "#6baed6", "140nM" = "#2171b5", "600nM" = "#1a56a6")
-custom_colors_T3 <- c("Control" = "#e6d7ef", "70nM" = "#c9a8e0", "140nM" = "#a579d1", "600nM" = "#7b52b5")
+custom_colors_T4 <- c("Control" = "#bdd7e7", "70nM" = "#6baed6", 
+                      "140nM" = "#2171b5", "600nM" = "#1a56a6")
+custom_colors_T3 <- c("Control" = "#e6d7ef", "70nM" = "#c9a8e0", 
+                      "140nM" = "#a579d1", "600nM" = "#7b52b5")
 
 # Function to get statistics
 get_stats <- function(data) {
@@ -357,16 +440,17 @@ create_plot <- function(data_suffix, colors) {
     dplyr::select(ends_with(data_suffix)) %>%
     rename_with(~ gsub(paste0(data_suffix, "$"), "", .)) %>%
     mutate(
-      group_treatment = factor(group_treatment, levels = c("Control", "70nM", "140nM", "600nM")),
+      group_treatment = factor(group_treatment, 
+                               levels = c("Control", "70nM", "140nM", "600nM")),
       replicate = as.factor(replicate)
     ) %>%
     drop_na()
   
-  # statistics
+  # stats
   stats_df <- get_stats(plot_data)
   
   # y positions for bars
-  data_max <- max(plot_data$length, na.rm = TRUE)
+  # data_max <- max(plot_data$length, na.rm = TRUE)
   # y_positions <- c(data_max + 5, data_max + 10, data_max + 15)
   y_positions <- c(110, 117, 124) 
   
@@ -385,7 +469,7 @@ create_plot <- function(data_suffix, colors) {
     geom_boxplot(aes(group = group_treatment, color = group_treatment), 
                  alpha = 0.3, fill = NA, linewidth = 0.6, outlier.shape = NA) +
     ggbeeswarm::geom_quasirandom(
-      aes(shape = replicate), # without ==> 3 bars
+      aes(shape = replicate),
       size = 3,
       width = 0.33,
       color = "black",
@@ -403,59 +487,74 @@ create_plot <- function(data_suffix, colors) {
   if ("70nM" %in% stats_df$comparison) {
     y1 <- y_positions[1]
     p <- p +
-      annotate("segment", x = 1, xend = 2, y = y1, yend = y1, color = "black", linewidth = 0.5) +
-      annotate("segment", x = 1, xend = 1, y = y1, yend = y1 - 2, color = "black", linewidth = 0.5) +
-      annotate("segment", x = 2, xend = 2, y = y1, yend = y1 - 2, color = "black", linewidth = 0.5) +
-      annotate("text", x = 1.5, y = y1 + 1, label = stats_df$p.signif[stats_df$comparison == "70nM"], size = 10, vjust = 0)
+      annotate("segment", x = 1, xend = 2, y = y1, yend = y1, 
+               color = "black", linewidth = 0.5) +
+      annotate("segment", x = 1, xend = 1, y = y1, yend = y1 - 2, 
+               color = "black", linewidth = 0.5) +
+      annotate("segment", x = 2, xend = 2, y = y1, yend = y1 - 2, 
+               color = "black", linewidth = 0.5) +
+      annotate("text", x = 1.5, y = y1 + 1, 
+               label = stats_df$p.signif[stats_df$comparison == "70nM"], 
+               size = 10, vjust = 0)
   }
   
   if ("140nM" %in% stats_df$comparison) {
     y2 <- y_positions[2]
     p <- p +
-      annotate("segment", x = 1, xend = 3, y = y2, yend = y2, color = "black", linewidth = 0.5) +
-      annotate("segment", x = 1, xend = 1, y = y2, yend = y2 - 2, color = "black", linewidth = 0.5) +
-      annotate("segment", x = 3, xend = 3, y = y2, yend = y2 - 2, color = "black", linewidth = 0.5) +
-      annotate("text", x = 2, y = y2 + 1, label = stats_df$p.signif[stats_df$comparison == "140nM"], size = 10, vjust = 0)
+      annotate("segment", x = 1, xend = 3, y = y2, yend = y2, 
+               color = "black", linewidth = 0.5) +
+      annotate("segment", x = 1, xend = 1, y = y2, yend = y2 - 2, 
+               color = "black", linewidth = 0.5) +
+      annotate("segment", x = 3, xend = 3, y = y2, yend = y2 - 2, 
+               color = "black", linewidth = 0.5) +
+      annotate("text", x = 2, y = y2 + 1, 
+               label = stats_df$p.signif[stats_df$comparison == "140nM"], 
+               size = 10, vjust = 0)
   }
   
   if ("600nM" %in% stats_df$comparison) {
     y3 <- y_positions[3]
     p <- p +
-      annotate("segment", x = 1, xend = 4, y = y3, yend = y3, color = "black", linewidth = 0.5) +
-      annotate("segment", x = 1, xend = 1, y = y3, yend = y3 - 2, color = "black", linewidth = 0.5) +
-      annotate("segment", x = 4, xend = 4, y = y3, yend = y3 - 2, color = "black", linewidth = 0.5) +
-      annotate("text", x = 2.5, y = y3 + 1, label = stats_df$p.signif[stats_df$comparison == "600nM"], size = 10, vjust = 0)
+      annotate("segment", x = 1, xend = 4, y = y3, yend = y3, 
+               color = "black", linewidth = 0.5) +
+      annotate("segment", x = 1, xend = 1, y = y3, yend = y3 - 2, 
+               color = "black", linewidth = 0.5) +
+      annotate("segment", x = 4, xend = 4, y = y3, yend = y3 - 2, 
+               color = "black", linewidth = 0.5) +
+      annotate("text", x = 2.5, y = y3 + 1, 
+               label = stats_df$p.signif[stats_df$comparison == "600nM"], 
+               size = 10, vjust = 0)
   }
   
   return(p)
 }
 
-
 # Create both plots with corrected scale_shape_manual
 a <- create_plot("_a", custom_colors_T4) +
-  scale_shape_manual(values = c("1" = 21, "2" = 22, "3" = 23), labels = c("1","2","3")) +
+  scale_shape_manual(values = c("1" = 21, "2" = 22, "3" = 23), 
+                     labels = c("1","2","3")) +
   geom_text(data = n_a,
             aes(x = group_treatment, y = y, label = label),
             inherit.aes = FALSE, size = 7, vjust = 0)
 
 d <- create_plot("_d", custom_colors_T3) +
-  scale_shape_manual(values = c("1" = 21, "2" = 22, "3" = 23), labels = c("1","2","3")) +
+  scale_shape_manual(values = c("1" = 21, "2" = 22, "3" = 23), 
+                     labels = c("1","2","3")) +
   geom_text(data = n_d,
             aes(x = group_treatment, y = y, label = label),
             inherit.aes = FALSE, size = 7, vjust = 0)
 
-
-
-# Combine plots with legend settings
+# combine plots
 plot_T4_T3 <- a + d &
-  theme(axis.title = element_text(size=22),
-        axis.text = element_text(size=18),
+  theme(axis.title = element_text(size = 22),
+        axis.text = element_text(size = 18),
         legend.position = c(0.95, 0.9),
         legend.justification = c(1, 0),
         legend.direction = "horizontal",
         legend.title = element_text(size = 10),
         legend.text = element_text(size = 9),
-        legend.background = element_rect(fill = "white", color = "black", linewidth = 0.3)
+        legend.background = element_rect(fill = "white", color = "black", 
+                                         linewidth = 0.3)
   ) &
   guides(
     color = "none",
@@ -468,64 +567,69 @@ plot_T4_T3 <- a + d &
   )
 
 plot_T4_T3
-
-# saving 
-# ggsave("ggsadv.pdf", plot = plot_T4_T3, device = cairo_pdf, width = 8.4167, height = 4,   units = "in", dpi = 300, family = "Helvetica")
-# 
-cowplot::save_plot(plot = plot_T4_T3,
-                   base_height = 4,
-                   base_asp = 4/1.9,
-                   file = paste0(file_path, 'plot_T4_T3a.pdf', sep = ''))
-
-# 
-cowplot::save_plot(plot = plot_T4_T3,
-                   base_height = 8,
-                   base_asp = 1.9,
-                   file = paste0(file_path, 'plot_T4_T3b.pdf', sep = ''),
-                   limitsize = FALSE)
-
-
-width_in <- 40 
-aspect_ratio <- 3/4   
-height_in <- width_in * aspect_ratio
-
-width_mm <- 4*width_in / 25.4
-height_mm <- 4*height_in / 25.4
-
-
-CairoPDF(file.path(file_path,  "plot_T4_T3_00.pdf"), width = width_mm, height = height_mm)
-print(plot_T4_T3)
-dev.off()
-
-
-# Using aspect ratio instead of explicit dimensions
-cowplot::save_plot(
-  plot = plot_T4_T3,
-  base_height = height_in,  # or any base height
-  base_asp = width_in / height_in,  # width:height ratio
-  file = file.path(file_path, "plot_T4_T3_1.pdf")
-)
-
-cowplot::save_plot(plot = plot_T4_T3,
-                   base_height = 0.9*3.71,
-                   base_asp = 0.9*1.618,
-                   file = file.path(file_path,'plot_T4_T3_2.pdf'))
-
-
-cowplot::save_plot(plot = plot_T4_T3,
-                   base_height = 1.9*3.71,
-                   base_asp = 0.9*1.618,
-                   file = file.path(file_path,'fig1I_nkx2.1-mut_thr-reporter_2.pdf'))
-
 ```
 
-## panels 8 and 24 hph supplementary
+## Save panel 2B,C
 
-```{r}
+```{r save_main}
+if (save_outputs) {
+  
+  message("Saving main T4/T3 plots...")
+  
+  # Method 1: CairoPDF with custom dimensions
+  width_in <- 40 
+  aspect_ratio <- 3/4   
+  height_in <- width_in * aspect_ratio
+  
+  width_mm <- 4 * width_in / 25.4
+  height_mm <- 4 * height_in / 25.4
+  
+  CairoPDF(opath("plot_T4_T3_00.pdf"), 
+           width = width_mm, 
+           height = height_mm)
+  print(plot_T4_T3)
+  dev.off()
+  
+  # Method 2: cowplot variations
+  cowplot::save_plot(
+    plot = plot_T4_T3,
+    base_height = 4,
+    base_asp = 4/1.9,
+    filename = opath("plot_T4_T3_a.pdf")
+  )
+  
+  cowplot::save_plot(
+    plot = plot_T4_T3,
+    base_height = height_in,
+    base_asp = width_in / height_in,
+    filename = opath("plot_T4_T3_1.pdf")
+  )
+  
+  cowplot::save_plot(
+    plot = plot_T4_T3,
+    base_height = 0.9 * 3.71,
+    base_asp = 0.9 * 1.618,
+    filename = opath("plot_T4_T3_2.pdf")
+  )
+  
+  cowplot::save_plot(
+    plot = plot_T4_T3,
+    base_height = 9,
+    base_asp = 1.9,
+    filename = opath("plot_T4_T3_3.pdf")
+  )
+
+  message("✓ Main plots saved to: ", out_dir)
+}
+```
+
+## Supplementary S8 (8 and 24 hpf)
+
+```{r supp_panels}
 #| fig-width: 12
 #| fig-height: 7
 #| out-width: 100%
-#| 
+
 b <- create_plot("_b", custom_colors_T4) +
   scale_shape_manual(values = c("1" = 21, "2" = 22, "3" = 23),
                      labels = c("1","2","3")) +
@@ -540,16 +644,16 @@ c <- create_plot("_c", custom_colors_T4) +
             aes(x = group_treatment, y = y, label = label),
             inherit.aes = FALSE, size = 4, vjust = 0)
 
-
 plot_T4_extra_timepoints <- b + c &
-  theme(axis.title = element_text(size=22),
-        axis.text = element_text(size=18),
+  theme(axis.title = element_text(size = 22),
+        axis.text = element_text(size = 18),
         legend.position = c(0.95, 0.9),
         legend.justification = c(1, 0),
         legend.direction = "horizontal",
         legend.title = element_text(size = 10),
         legend.text = element_text(size = 9),
-        legend.background = element_rect(fill = "white", color = "black", linewidth = 0.3)
+        legend.background = element_rect(fill = "white", color = "black", 
+                                         linewidth = 0.3)
   ) &
   guides(
     color = "none",
@@ -562,54 +666,64 @@ plot_T4_extra_timepoints <- b + c &
   )
 
 plot_T4_extra_timepoints
-
-## --- Save  ---
-
-cowplot::save_plot(plot = plot_T4_extra_timepoints,
-                   base_height = 4,
-                   base_asp = 4/1.9,
-                   file = file.path(file_path, "plot_T4_extra_timepoints_a.pdf"))
-
-cowplot::save_plot(plot = plot_T4_extra_timepoints,
-                   base_height = 8,
-                   base_asp = 1.9,
-                   file = file.path(file_path, "plot_T4_extra_timepoints_b.pdf"),
-                   limitsize = FALSE)
-
-width_in <- 40
-aspect_ratio <- 3/4
-height_in <- width_in * aspect_ratio
-
-CairoPDF(file.path(file_path, "plot_T4_extra_timepoints_00.pdf"),
-         width = width_in, height = height_in)
-print(plot_T4_extra_timepoints)
-dev.off()
-
-cowplot::save_plot(
-  plot = plot_T4_extra_timepoints,
-  base_height = height_in,
-  base_asp = width_in / height_in,
-  file = file.path(file_path, "plot_T4_extra_timepoints_1.pdf")
-)
-
-cowplot::save_plot(plot = plot_T4_extra_timepoints,
-                   base_height = 0.9*3.71,
-                   base_asp = 0.9*1.618,
-                   file = file.path(file_path, "plot_T4_extra_timepoints_2.pdf"))
-
-cowplot::save_plot(plot = plot_T4_extra_timepoints,
-                   base_height = 1.9*3.71,
-                   base_asp = 0.9*1.618,
-                   file = file.path(file_path, "fig1I_extra_timepoints.pdf"))
-
 ```
 
-## extra: trying different layout
+## Save Supplementary Panels
+
+```{r save_supp}
+if (save_outputs) {
+  
+  message("Saving supplementary timepoint plots...")
+  
+  width_in <- 40
+  aspect_ratio <- 3/4
+  height_in <- width_in * aspect_ratio
+  
+  CairoPDF(opath("plot_T4_extra_timepoints_00.pdf"),
+           width = width_in, 
+           height = height_in)
+  print(plot_T4_extra_timepoints)
+  dev.off()
+  
+  cowplot::save_plot(
+    plot = plot_T4_extra_timepoints,
+    base_height = 4,
+    base_asp = 4/1.9,
+    filename = opath("plot_T4_extra_timepoints_a.pdf")
+  )
+  
+  cowplot::save_plot(
+    plot = plot_T4_extra_timepoints,
+    base_height = height_in,
+    base_asp = width_in / height_in,
+    filename = opath("plot_T4_extra_timepoints_1.pdf")
+  )
+  
+  cowplot::save_plot(
+    plot = plot_T4_extra_timepoints,
+    base_height = 0.9 * 3.71,
+    base_asp = 0.9 * 1.618,
+    filename = opath("plot_T4_extra_timepoints_2.pdf")
+  )
+  
+  cowplot::save_plot(
+    plot = plot_T4_extra_timepoints,
+    base_height = 1.9*3.71,
+    base_asp = 0.9*1.618,
+    filename = opath("plot_T4_extra_timepoints_2.pdf")
+  )
+  
+  message("✓ Supplementary plots saved to: ", out_dir)
+  
+}
+```
+
+#### extra: trying different layout
 
 ```{r}
-# # _____________________________________________________________________
-# # great now the plot
-# # __________________________________________________________________________
+# _____________________________________________________________________
+# great now the plot
+# __________________________________________________________________________
 # 
 # custom_colors_T4 <- c("Control" = "#bdd7e7", "70nM" = "#6baed6", "140nM" = "#2171b5", "600nM" = "#1a56a6")
 # custom_colors_T3 <- c("Control" = "#e6d7ef", "70nM" = "#c9a8e0", "140nM" = "#a579d1", "600nM" = "#7b52b5")
@@ -676,17 +790,23 @@ cowplot::save_plot(plot = plot_T4_extra_timepoints,
 #     scale_y_reverse(limits=c(130,0), breaks = c(0, 25, 50, 75, 100)) +
 # 
 #   labs(x = "", y = "% tail regression") +
-#   
+# 
 #   scale_color_manual(values = custom_colors_T3) + # Assign custom colors to fill
 #   scale_fill_manual(values = custom_colors_T3) + # Assign custom colors to fill
 #   scale_shape_manual(values = c(21, 22, 23))  # Assign shapes 21, 22, and 23 to different replicates
-#   # geom_beeswarm(aes(color = factor(group_treatment)), dodge.width = 0.5, stroke = 0.7, alpha = 0.5, size = 4) 
+#   # geom_beeswarm(aes(color = factor(group_treatment)), dodge.width = 0.5, stroke = 0.7, alpha = 0.5, size = 4)
 # 
 # # a+b & theme(axis.title = element_text(size=22),
 # #            axis.text = element_text(size=18),
-# #            legend.position = "none") 
+# #            legend.position = "none")
 # 
-# plota= a+b & theme(legend.position = "none") 
+# plota= a+b & theme(legend.position = "none")
 # plota
 
+```
+
+## Session Info
+
+```{r session_info}
+sessionInfo()
 ```

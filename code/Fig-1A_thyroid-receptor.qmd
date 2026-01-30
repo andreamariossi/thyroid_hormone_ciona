@@ -1,19 +1,45 @@
 ---
-title: "Fig-1a"
+title: "Fig-1A_thyroid receptor"
 author: "Andrea Mariossi"
-format: html
-editor: visual
-editor_options: 
+
+format:
+  html:
+    embed-resources: true
+    toc: true
+    toc-location: left
+    toc-depth: 5
+    code-fold: false
+    code-line-numbers: true
+    page-layout: article
+    grid:
+      sidebar-width: 100px
+      body-width: 2000px
+      margin-width: 100px
+      gutter-width: 3.5rem
+
+execute:
+  echo: true
+
+fig-width: 18
+fig-height: 10
+fig-align: center
+fig-format: png
+out-width: "90%"
+
+editor_options:
   chunk_output_type: inline
 ---
 
-### setup
+-   **Inputs** come either from my local folder or from the repository’s folder (when downloaded from GitHub).
+-   **Outputs** of GitHub are written to a new local folder named `output_rerun/`
 
 ```{r}
 rm(list = ls())
 
 # Package loading
 suppressPackageStartupMessages({
+  library(here) # easy path 
+  library(Cairo) # pdf
   # Data manipulation & file import
   library(tidyverse)
   library(janitor)
@@ -31,7 +57,6 @@ suppressPackageStartupMessages({
   #rna-seq
   library(SummarizedExperiment)
   library(readxl)
-  library(Cairo)
 })
 
 ```
@@ -40,17 +65,79 @@ suppressPackageStartupMessages({
 
 ```{r}
 
-# ===== path =====
-file_path <- "/Users/andrea/Princeton Dropbox/Andrea Mariossi/4.paper_archive/2025_thyroid_pathway_&_metamorphosis/3.1.ScienceAdvances_submission_rev/tables/"
+################################################################################
+# ---- Configuration ----
+################################################################################
 
-# ===== theme & style =====
+pick_pipeline <- "my_local"  # "my_local" or "github"
+
+# ---- my paths (inputs + outputs) ----
+file_path <- "/Users/andrea/Library/CloudStorage/GoogleDrive-andrea.mariossi@gmail.com/My Drive/4.paper_archive/2025_thyroid_pathway_&_metamorphosis/04.SciAdv_rev/source_data"
+
+# ---- Pipeline switch ----
+if (pick_pipeline == "my_local") {
+  
+  # ---- my paths (inputs+outputs) ----
+  # Inputs from my local folder
+  data_dir <- file_path
+  out_dir  <- file.path(file_path, "output")
+  save_outputs <- TRUE
+  
+} else if (pick_pipeline == "github") {
+  
+  # ---- GitHub repo paths ----
+  # By opening `thyroid_hormone_ciona.Rproj` in RStudio, `here()` finds the project root
+  repo_dir <- here::here()
+  
+  # Fallback: if you downloaded the repo as a zip and unzipped it
+  if (!dir.exists(file.path(repo_dir, "data"))) {
+    repo_dir_try <- normalizePath(path.expand("~/Downloads/thyroid_hormone_ciona-main"), mustWork = FALSE)
+    if (dir.exists(file.path(repo_dir_try, "data"))) {
+      repo_dir <- repo_dir_try
+    } else {
+      stop("Cannot find repo 'data/' folder.\n",
+           "  → Open the .Rproj file in RStudio, OR\n",
+           "  → Set working directory to repo root with setwd(), OR\n",
+           "  → Unzip thyroid_hormone_ciona-main.zip and update the path above.")
+    }
+  }
+  
+  data_dir <- file.path(repo_dir, "data")
+  out_dir  <- file.path(repo_dir, "output_rerun")
+  save_outputs <- TRUE  # Default: no saving in GitHub mode
+  
+  # Uncomment line below to NOT saving outputs when running from GitHub:
+  # save_outputs <- FALSE
+  
+}
+
+# ---- Path functions ----
+dpath <- function(...) file.path(data_dir, ...)
+opath <- function(...) file.path(out_dir, ...)
+
+# Only create output dir when actually saving
+if (save_outputs) dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+
+# ---- Configuration summary ----
+message("─────────────────────────────────────────")
+message("Pipeline: ", pick_pipeline)
+message("Data dir (inputs): ", data_dir)
+if (exists("repo_dir")) message("Repo dir: ", repo_dir)
+message("Save outputs: ", save_outputs)
+if (save_outputs) message("Output dir: ", out_dir)
+message("─────────────────────────────────────────")
+
+################################################################################
+# ---- Theme & Style ----
+################################################################################
+
 custom_theme <- function() {
   theme(
-    axis.ticks = element_line(size = 0.5),
+    axis.ticks = element_line(linewidth = 0.5),
     axis.ticks.length = unit(0.09, "cm"),
     legend.key.height = unit(20, "pt"),
     axis.line = element_blank(),
-    panel.border = element_rect(colour = "black", fill = NA, size = 1),
+    panel.border = element_rect(colour = "black", fill = NA, linewidth = 1),
     panel.background = element_blank(),
     plot.background = element_blank(),
     panel.grid.major = element_blank(),
@@ -58,13 +145,20 @@ custom_theme <- function() {
     legend.background = element_blank(),
     legend.box.background = element_blank(),
     legend.key = element_blank(),
-    strip.background = element_blank(),
+    strip.background = element_blank()
   )
 }
 
+# If using Arial font 
+# library(showtext)
+# library(sysfonts)
+# sysfonts::font_add("Arial", regular = "/Library/Fonts/Arial.ttf")  # macOS 
+# # sysfonts::font_add("Arial", regular = "C:/Windows/Fonts/arial.ttf")  # Windows
+# showtext_auto()
+# theme_set(theme_pubr(base_size = 13, base_family = "Arial") + custom_theme())
+
 # ===== set theme =====
-theme_set(theme_pubr(base_size = 13,
-                     base_family = "Helvetica") + custom_theme())
+theme_set(theme_pubr(base_size = 13, base_family = "sans") + custom_theme())
 
 # ===== extra bits =====
 no_legend <- theme(legend.position = "none")
@@ -73,6 +167,10 @@ axis_text_45 <- theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 
 ```
 
 ```{r}
+
+################################################################################
+# ---- Helper Functions & Data ----
+################################################################################
 
 # ===== developmental stages =====
 stage_level_hu <- c("fertE","cell2","cell8","cell16","cell32","cell64","iniG", "midG", "earN", "latN", "earTI", "midTII", "latTII", "earLarva","latLarva", "earRot","latRot","earJv", "midJv","latJv","adult")
@@ -91,31 +189,29 @@ stage_lookup_hu <-
 
 levels(stage_lookup_hu$stage_category_hu)
 
-# ===== time mapping =====
-
-# -------------------------------------
-# To map stage to time hours post fertilization
-# -------------------------------------
+# ---- Time mapping ------------------------------------------------------------
+# stage to time hours post fertilization
+# ------------------------------------------------------------------------------
 
 time_map.df <- tibble(
-  stage = c("st.1", "st.2", "st.4", "st.5", "st.6", "st.8", "st.10", "st.12", "st.14", "st.16",
-            "st.19", "st.22", "st.24","st.26", "st.27", "st.29", "st.35", "st.37", "st.38", "st.40", "st.45", "st.50"),
-  description = c("One.cell", "2-cell", "8-cell", "late.16-cell", "late.32.cell", "64-cell", "110-cell",
-                  "mid.gastrula", "early.neurula", "late.neurula", "early.tailbud.I", "mid.tailbud.II",
-                  "late.tailbud.II", "hatching.larva", "early.swimming.larva", "late.swimming.larva", "early.rotation",
-                  "late.rotation", "early.juvenile.I", "mid.juvenile", "late.juvenile", "adult"),
+  stage = c("st.1", "st.2", "st.4", "st.5", "st.6", "st.8", "st.10", "st.12", 
+            "st.14", "st.16", "st.19", "st.22", "st.24", "st.26", "st.27", 
+            "st.29", "st.35", "st.37", "st.38", "st.40", "st.45", "st.50"),
+  description = c("One.cell", "2-cell", "8-cell", "late.16-cell", "late.32.cell", 
+                  "64-cell", "110-cell", "mid.gastrula", "early.neurula", 
+                  "late.neurula", "early.tailbud.I", "mid.tailbud.II",
+                  "late.tailbud.II", "hatching.larva", "early.swimming.larva", 
+                  "late.swimming.larva", "early.rotation", "late.rotation", 
+                  "early.juvenile.I", "mid.juvenile", "late.juvenile", "adult"),
   hours = c(0.24, 0.55, 1.54, 2.39, 3.12, 4, 4.33, 5.39, 6.21, 7.24,
-            9.19, 10.5, 13.3, 17, 19, 23, 39, 69, 96, 168, 190, 300)
-)
+            9.19, 10.5, 13.3, 17, 19, 23, 39, 69, 96, 168, 190, 300))
 
-# -------------------------------------
+# ---- Data processing functions -----------------------------------------------
 # to extract gene annotation 
-# -------------------------------------
+# ------------------------------------------------------------------------------
 
-# ===== clean names =====
-get_gene_annotation <- function(se_object) {
-  return(rowData(se_object))
-}
+get_gene_annotation <- function(se_object) rowData(se_object)
+# get_gene_annotation <- function(se_object) {return(rowData(se_object))}
 
 # ===== clean names =====
 extract_sample_info_hu <- function(df, sample_col) {
@@ -148,9 +244,17 @@ process_long_tidy <- function(counts_data, extract_sample_info_func,counts_type)
 
 ```{r}
 
-# Load and process kallisto TPM data
-hu_kallisto_data <- readRDS(paste0(file_path,
-                                   '/kallisto.merged.gene_counts_length_scaled.rds'))
+# ============================================================
+# Fig 1A: thyroid hormone recpetor: RNA + protein
+# ============================================================
+
+# ---- Time series RNA from Hu et al. 2017 -------------------------------------
+# kallisto TPM data
+# ------------------------------------------------------------------------------
+
+kallisto_file <- dpath("kallisto.merged.gene_counts_length_scaled.rds")
+stopifnot(file.exists(kallisto_file))
+hu_kallisto_data <- readRDS(kallisto_file)
 
 # ===== Inspect data structure =====
 assayNames(hu_kallisto_data)
@@ -174,7 +278,7 @@ hu_TPM_tidy <- process_long_tidy(hu_tpm_kallisto, extract_sample_info_hu, "TPM")
 # ===== gene annotation from the SummarizedExperiment object =====
 gene_annotation <- get_gene_annotation(hu_kallisto_data)
 
-# ===== quick visualization =====
+# ===== quick visualization of thyroid receptor expression =====
 hu_TPM_tidy |> 
   filter(genes == "KY21.Chr11.1104") |> 
 ggplot(aes(x = stage, color = stage, shape = rep)) +
@@ -182,7 +286,7 @@ ggplot(aes(x = stage, color = stage, shape = rep)) +
   no_legend +
   axis_text_45
 
-## TH peaks before metamorphosis: we don't need the data points from latRot onward (40hpf)
+## Thr peaks before metamorphosis: we don't need the data points from latRot onward (40hpf)
 
 ```
 
@@ -190,12 +294,18 @@ ggplot(aes(x = stage, color = stage, shape = rep)) +
 
 ```{r}
 
-# Read Frese_2024_TMTproC
-frese_prot.df <- read_excel(file.path(file_path, 
-                                      "3_rna_protein_dynamics.xlsx"),
-                            sheet = "TMTproC_Frese_2024_relAbuncance", 
-                            cell_cols("A:L"),
-                            col_types = c(rep("text", 3), rep("numeric", 9)))
+# ---- Time series protein from Frese et al. 2024 ------------------------------
+# TMTproC protein data
+# ------------------------------------------------------------------------------
+xlsx_file <- dpath("1_rna_protein_dynamics.xlsx")
+stopifnot(file.exists(xlsx_file))
+
+frese_prot.df <- read_excel(
+  xlsx_file, 
+  sheet = "TMTproC_Frese_2024_relAbuncance", 
+  cell_cols("A:L"),
+  col_types = c(rep("text", 3), rep("numeric", 9))
+)
 
 # Protein values are normalize by the sum, then scale to 1
 frese_prot.df <- frese_prot.df %>% 
@@ -211,7 +321,7 @@ frese_prot.df <- frese_prot.df %>%
     values_to = "protein"
   )
 
-# ===== plot protein =====
+# ===== plopt different protein normalizations =====
 ggplot(frese_prot.df, aes(x = fct_inorder(stage), y = protein, color = measurement, group = measurement)) +
   geom_line(size = 1.2) +
   geom_point(size = 2) +
@@ -287,7 +397,7 @@ thr_plot <- rna_protein.df |>
   # RNA data (primary axis)
   geom_line(data = . %>% filter(!is.na(tpm)),
             aes(y = tpm, color = "TPM"), 
-            size = 1) +
+            linewidth = 1) +
   geom_point(data = . %>% filter(!is.na(tpm)),
              aes(y = tpm, color = "TPM"), 
              size = 3.5,shape = 16) +
@@ -305,17 +415,13 @@ thr_plot <- rna_protein.df |>
              size = 3.5,shape = 18) +
   
   # Scales and labels
-  scale_x_continuous(breaks = seq(0, 40, by = 5), 
-                     labels = seq(0, 40, by = 5)
-                     ) +
+  scale_x_continuous(breaks = seq(0, 40, by = 5), labels = seq(0, 40, by = 5)) +
   scale_y_continuous(name = "TPM (transcript per million)",
                      sec.axis = sec_axis(~./scale_factor, name = "Protein relative abundance")
                      ) +
   scale_color_manual(
     values = c("TPM" = "#00a087", "Protein" = "#3c5488"),
-    guide = guide_legend(override.aes = list(linetype = c("dashed", "solid"),
-                                             shape = c(18, 16))
-                         )) +
+    guide = guide_legend(override.aes = list(linetype = c("dashed", "solid"),shape = c(18, 16)))) +
   labs(x = "Hours post development", color = "") +
   
   # Developmental stage annotations
@@ -330,7 +436,8 @@ thr_plot <- rna_protein.df |>
            y = 250, 
            label = c("Hatching", "Swi", "Adh", "Tail \nreg", "Juveniles"), 
            size = 4, color = "black") +
-  
+   
+  # theme
   custom_theme() +
   theme(
     legend.position = c(0.05, 0.9),
@@ -353,34 +460,58 @@ thr_plot
 
 ```{r}
 
-# ===== CairoPDF =====
+################################################################################
+# ---- Save Plots ----
+################################################################################
 
-# Define dimensions
-width_in <- 40 
-aspect_ratio <- 3/4 
-height_in <- width_in * aspect_ratio
+################################################################################
+# ---- Save Plots ----
+################################################################################
 
-# Convert mm to inche
-height_mm <- 4* height_in / 25.4   # ≈ 1.378 inches
-width_mm <- 4*width_in / 25.4  # ≈ 1.929 inches
-thr_plot
+if (save_outputs) {
+  
+  # ---- Save settings ----
+  width_in <- 40
+  aspect_ratio <- 3/4
+  height_in <- width_in * aspect_ratio
+  
+  height_mm <- 4 * height_in / 25.4
+  width_mm  <- 4 * width_in  / 25.4
+  
+  # ===== CairoPDF =====
+  Cairo::CairoPDF(
+    file = opath("fig1_rna_protein_dynamics_0.pdf"),
+    width = width_mm,
+    height = height_mm
+  )
+  print(thr_plot)
+  dev.off()
+  
+  # ===== cowplot =====
+  # Save with cowplot (default aspect ratio)
+  cowplot::save_plot(
+    plot = thr_plot,
+    base_height = 3.71,
+    base_asp = 1.618,
+    filename = opath("fig1_rna_protein_dynamics_1.pdf")
+  )
+  
+  # Save with cowplot (scaled 1.1x)
+  cowplot::save_plot(
+    plot = thr_plot,
+    base_height = 1.1 * 3.71,
+    base_width  = 1.1 * 3.71 * 1.618,
+    filename = opath("fig1_rna_protein_dynamics_2.pdf")
+  )
+  
+  message("✓ Plots saved to: ", out_dir)
 
-CairoPDF(normalizePath(paste(file_path,'fig1_rna_protein_dynamics_0.pdf', sep = '')),
-         width = width_mm, 
-         height = height_mm)
-print(thr_plot)
-dev.off()
+}
 
-# ===== cowplot =====
+```
 
-cowplot::save_plot(plot = thr_plot,
-                   base_height = 3.71,
-                   base_asp = 1.618,
-                   file = normalizePath(paste(file_path, 'fig1_rna_protein_dynamics_1.pdf', sep = '')))
+## Session Info
 
-cowplot::save_plot(plot = thr_plot,
-                   base_height = 1.1*3.71,
-                   base_width = 1.1*3.71*1.618,
-                   file = normalizePath(paste(file_path, 'fig1_rna_protein_dynamics-2.pdf', sep = '')))
-
+```{r session_info}
+sessionInfo()
 ```

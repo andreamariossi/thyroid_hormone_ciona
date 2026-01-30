@@ -1,0 +1,1053 @@
+---
+title: "Fig-4C_OEexp_photoreceptor"
+author: "Andrea Mariossi"
+format:
+  html:
+    embed-resources: true
+    toc: true
+    toc-location: left
+    toc-depth: 5
+    code-fold: false
+    code-line-numbers: true
+    page-layout: article
+    grid:
+      sidebar-width: 100px
+      body-width: 2000px
+      margin-width: 100px
+      gutter-width: 3.5rem
+execute:
+  echo: true
+  warning: false
+  message: true
+fig-width: 18
+fig-height: 10
+fig-align: center
+fig-format: png
+out-width: "90%"
+editor_options:
+  chunk_output_type: inline
+---
+
+# Photoreceptor Overexpression: Opsin2 via Opsin1 Enhancer
+
+-   **Inputs** come either from my local folder or from the repository’s folder (when downloaded from GitHub).
+-   **Outputs** of GitHub are written to a new local folder named `output_rerun/`
+
+## Setup
+
+```{r setup}
+#| include: false
+
+rm(list = ls())
+
+# ---- packages ----
+suppressPackageStartupMessages({
+  # library(rstatix)
+  library(Cairo)
+  library(patchwork)
+  # library(lattice)
+  library(here)         # Relative paths
+  library(tidyverse)    # Data wrangling and ggplot
+  library(readxl)       # Excel input
+  library(lme4)         # GLMM fitting
+  library(lmerTest)     # P-values for mixed models
+  library(emmeans)      # Marginal means and contrasts
+  library(performance)  # Model diagnostics (R2, ICC, overdispersion)
+  library(DHARMa)       # GLMM residual diagnostics
+  library(broom.mixed)  # Tidy model outputs
+  library(knitr)        # Table formatting
+  library(kableExtra)   # Enhanced tables
+  library(binom)        # Wilson confidence intervals
+  library(ggpubr)      # Publication-ready themes
+  library(ggrepel)     # rext obj repel
+})
+```
+
+## Configuration
+
+```{r config}
+################################################################################
+# ---- Configuration ----
+################################################################################
+
+pick_pipeline <- "my_local"  # "my_local" or "github"
+
+# ---- My paths (inputs + outputs) ----
+file_path <- "/Users/andrea/Library/CloudStorage/GoogleDrive-andrea.mariossi@gmail.com/My Drive/4.paper_archive/2025_thyroid_pathway_&_metamorphosis/04.SciAdv_rev/source_data"
+
+# ---- Pipeline switch ----
+if (pick_pipeline == "my_local") {
+  
+  # Inputs from my local folder
+  data_dir <- file_path
+  out_dir  <- file.path(file_path, "output")
+  save_outputs <- TRUE
+  
+} else if (pick_pipeline == "github") {
+  
+  # ---- GitHub repo paths ----
+  # By opening `thyroid_hormone_ciona.Rproj` in RStudio, `here()` finds the project root
+  repo_dir <- here::here()
+  
+  # Fallback: if you downloaded the repo as a zip and unzipped it
+  if (!dir.exists(file.path(repo_dir, "data"))) {
+    repo_dir_try <- normalizePath(path.expand("~/Downloads/thyroid_hormone_ciona-main"), mustWork = FALSE)
+    if (dir.exists(file.path(repo_dir_try, "data"))) {
+      repo_dir <- repo_dir_try
+    } else {
+      stop("Cannot find repo 'data/' folder.\n",
+           "  → Open the .Rproj file in RStudio, OR\n",
+           "  → Set working directory to repo root with setwd(), OR\n",
+           "  → Unzip thyroid_hormone_ciona-main.zip and update the path above.")
+    }
+  }
+  
+  data_dir <- file.path(repo_dir, "data")
+  out_dir  <- file.path(repo_dir, "output_rerun")
+  save_outputs <- TRUE
+  
+  # Uncomment line below to NOT save outputs when running from GitHub:
+  # save_outputs <- FALSE
+}
+
+# ---- Path helper functions ----
+dpath <- function(...) file.path(data_dir, ...)
+opath <- function(...) file.path(out_dir, ...)
+
+# Only create output dir when actually saving
+if (save_outputs) dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+
+# ---- Configuration summary ----
+message("─────────────────────────────────────────")
+message("Pipeline: ", pick_pipeline)
+message("Data dir (inputs): ", data_dir)
+if (exists("repo_dir")) message("Repo dir: ", repo_dir)
+message("Save outputs: ", save_outputs)
+if (save_outputs) message("Output dir: ", out_dir)
+message("─────────────────────────────────────────")
+
+################################################################################
+# ---- Theme & Style ----
+################################################################################
+
+custom_theme <- function() {
+  theme(
+    axis.ticks = element_line(linewidth = 0.5),
+    axis.ticks.length = unit(0.09, "cm"),
+    legend.key.height = unit(20, "pt"),
+    axis.line = element_blank(),
+    panel.border = element_rect(colour = "black", fill = NA, linewidth = 1),
+    panel.background = element_blank(),
+    plot.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    legend.background = element_blank(),
+    legend.box.background = element_blank(),
+    legend.key = element_blank(),
+    strip.background = element_blank()
+  )
+}
+
+# If using Arial font (optional)
+# library(showtext)
+# library(sysfonts)
+# sysfonts::font_add("Arial", regular = "/Library/Fonts/Arial.ttf")  # macOS 
+# # sysfonts::font_add("Arial", regular = "C:/Windows/Fonts/arial.ttf")  # Windows
+# showtext_auto()
+# theme_set(theme_pubr(base_size = 13, base_family = "Arial") + custom_theme())
+
+theme_set(theme_pubr(base_size = 13, base_family = "sans") + custom_theme())
+
+# Extra styling
+no_legend <- theme(legend.position = "none")
+axis_text_45 <- theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+
+# ---- color palette ----
+status_colors <- c(Attached = "#1f7070", Swimming = "gray70")
+status_colors <- c(Attached = "#55a2a1", Swimming = "gray70")
+status_colors <- c(Attached = "#384860", Swimming = "gray70")
+
+# ---- pretty p-values for kable ----
+format_pvalues <- function(df) {
+  df %>%
+    mutate(across(
+      any_of(c("p.value", "p.value.x", "p.value.y", "adj.p.value")),
+      ~ case_when(
+        . < 0.001 ~ format(., scientific = TRUE, digits = 2),
+        TRUE ~ as.character(round(., 4))
+      )
+    ))
+}
+```
+
+## Data Loading
+
+```{r load_data}
+# Read and preprocess data
+overexp_file <- dpath("12_photoreceptor_overexpression_opsin2.xlsx")
+stopifnot(file.exists(overexp_file))
+
+# read and preprocess data
+opsn1_opsin2.df <- read_excel(overexp_file) %>%
+  slice(1:10)  # line 11 is annotation reporter
+
+opsn1_opsin2.df %>%
+  kable(caption = "Raw data") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+```
+
+## Descriptive Info
+
+```{r descr_info}
+# Data Processing
+################################################################################
+
+# percentages per replicate
+opsn1_opsin2.tidy <- opsn1_opsin2.df %>%
+  mutate(total_larvae = swimming_larvae + attached_larvae) %>%
+  pivot_longer(cols = c(attached_larvae, swimming_larvae), names_to = "status",values_to = "count") %>%
+  group_by(condition, bioRep) %>%
+  mutate(percent = round(count * 100 / sum(count), 1)) %>%  # % per replicate
+  ungroup()
+
+# summarize per condition
+opsn1_opsin2_condition.tidy <- opsn1_opsin2.df %>%
+  mutate(total_larvae = swimming_larvae + attached_larvae) %>%
+  group_by(condition) %>%
+  summarise(attached = sum(attached_larvae),
+            not_attached = sum(swimming_larvae),
+            total = sum(total_larvae),
+            n_replicates = n()
+            ) %>%
+  pivot_longer(cols = c(attached, not_attached),
+                names_to = "status",
+                values_to = "count"
+              ) %>%
+  mutate(percent = count / total * 100)
+
+# summary data: mean and SE for each segment
+opsn1_opsin2_summary.df <- opsn1_opsin2.tidy %>%
+  group_by(condition, status) %>%
+  summarise(mean_percent = mean(percent),
+            se = sd(percent) / sqrt(n()),
+            .groups = "drop"
+          ) %>%
+  arrange(condition, status) %>%
+  # calculate cumulative y-position for error bars
+  group_by(condition) %>%
+  arrange(condition, desc(status)) %>%  # stacking order
+  mutate( y_cumulative = cumsum(mean_percent),  # top of each segment
+          y_start = y_cumulative - mean_percent  # bottom of each segment
+        )
+
+opsn1_opsin2_summary.df %>%
+  kable(caption = "Summary statistics") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+# # clean tidy a single working analysisdataset
+# opsn1_opsin2_analysis <- opsn1_opsin2.df %>%
+#   mutate(
+#     total_larvae = swimming_larvae + attached_larvae,
+#     prop_attached = attached_larvae / total_larvae
+#   )
+```
+
+## QC visualization
+
+-   <div>
+
+    ```{r sample_size_check}
+    # QC Visualization
+    ################################################################################
+
+    # ---- Check sample size distribution ----
+
+    # Summary by replicate
+    replicate_summary <- opsn1_opsin2.df %>%
+      mutate(total_larvae = swimming_larvae + attached_larvae) %>%
+      group_by(condition, bioRep) %>%
+      summarise(
+        n_larvae = sum(total_larvae),
+        prop_attached = sum(attached_larvae) / sum(total_larvae),
+        .groups = "drop"
+      )
+
+    replicate_summary %>%
+      kable(caption = "Sample sizes by biological replicate") %>%
+      kable_styling(bootstrap_options = c("striped", "hover"))
+
+    # Visualize sample size distribution
+    p_sizeDistribution <- ggplot(replicate_summary, aes(x = bioRep, y = n_larvae, fill = condition)) +
+      geom_col(position = "dodge", color = "black", alpha = 0.8) +
+      scale_fill_manual(values = c("lacz" = "#636363", "opsin2" = "#1f7070")) +
+      labs(
+        subtitle = "Larvae per Biological Replicate",
+        x = "Biological Replicate",
+        y = "Number of Larvae",
+        fill = "Condition"
+      ) +
+      custom_theme()
+
+    # proportion vs sample size (to see if small samples behave differently)
+    p_sizeProp <- ggplot(replicate_summary, aes(x = n_larvae, y = prop_attached * 100, color = condition)) +
+      geom_point(size = 4, alpha = 0.7) +
+      geom_smooth(method = "lm", se = FALSE, linetype = "dashed") +
+      scale_color_manual(values = c("lacz" = "#636363", "opsin2" = "#1f7070")) +
+      labs(
+        subtitle = "Larvae attached per Biological Replicate",
+        x = "Number of Larvae per Replicate",
+        y = "% Attached",
+        color = "Condition"
+      ) +
+      custom_theme()
+
+    p_sizeDistribution + p_sizeProp +
+      plot_annotation(title = "Attachment Rate vs Sample Size") &
+      theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+
+
+    ```
+
+    </div>
+
+-   systematic relationship between sample size and attachment rate within each condition
+
+-   the regression lines are relatively flat (slight downward trend for lacz, slight upward for opsin2, but not concerning)
+
+-   range of sample sizes (40-115 larvae per replicate) but outcomes remain consistent within groups )
+
+-   One opsin2 replicate with \~115 larvae shows higher attachment (\~83%), but this is consistent with other opsin2 replicates
+
+```{r qc_plots}
+# QC Visualization
+################################################################################
+
+# https://stackoverflow.com/questions/42329858/stacked-percentage-barplot-with-error-bars-in-ggplot2
+
+# ---- side-by-side comparison ----
+opsn1_opsin2_summary.df %>%
+  mutate(status = factor(status, levels = c("swimming_larvae", "attached_larvae"))) %>%
+  ggplot(aes(x = condition, y = mean_percent, fill = status)) +
+  geom_col(position = "dodge", width = 0.7, alpha = 0.8, color = "black") +
+  geom_errorbar(
+    aes(ymin = mean_percent - se, ymax = mean_percent + se),
+    position = position_dodge(width = 0.7),
+    width = 0.2
+  ) +
+  scale_fill_manual(
+    values = c("attached_larvae" = "#384860", "swimming_larvae" = "gray40"),
+    labels = c("no", "yes")
+  ) +
+  scale_y_continuous(
+    labels = scales::percent_format(scale = 1),
+    breaks = c(25, 50, 75, 100),
+    limits = c(0, 100)
+  ) +
+  labs(y = "% of Larvae", x = "Condition") +
+  custom_theme()
+
+# ---- single bar plot ----
+replicate_data <- opsn1_opsin2.tidy %>%
+  filter(status == "attached_larvae")
+
+ggplot() +
+  # bar for mean percentage
+  geom_col(
+    data = opsn1_opsin2_summary.df %>% filter(status == "attached_larvae"),
+    aes(x = condition, y = mean_percent),
+    width = 0.6,
+    fill = "#384860",
+    color = "black",
+    alpha = 0.8
+  ) +
+  # individual replicate points
+  geom_point(
+    data = replicate_data,
+    aes(x = condition, y = percent),
+    size = 3,
+    shape = 21,
+    fill = "white",
+    color = "black"
+  ) +
+  # sample size labels
+  geom_text(data = opsn1_opsin2_condition.tidy %>% filter(status == "attached") %>% distinct(),
+    aes(x = condition, y = 105,label = paste0("n = ", total, " larvae\n(", n_replicates, " replicates)")), size = 3.5) +
+  # significance bracket
+  annotate("segment", x = 1, xend = 2, y = 95, yend = 95, linewidth = 0.6) +
+  annotate("segment", x = 1, xend = 1, y = 95, yend = 93, linewidth = 0.6) +
+  annotate("segment", x = 2, xend = 2, y = 95, yend = 93, linewidth = 0.6) +
+  labs(x = "", y = "Larvae Attached (%)") +
+  custom_theme() +
+  coord_cartesian(ylim = c(0, 110))
+
+# ---- stacked plot ----
+# this use stardard CI
+overExp_plot_onlyLower <- ggplot(
+  opsn1_opsin2_summary.df,
+  aes(x = condition, y = mean_percent, fill = status)
+) +
+  # stacked bars (mean %)
+  geom_col(width = 0.7, alpha = 0.8, color = "black") +
+  # segment-specific error bars
+  geom_errorbar(
+    data = subset(opsn1_opsin2_summary.df, status == "attached_larvae"),
+    aes(
+      ymin = y_start - se,  # at the boundary
+      ymax = y_start + se
+    ),
+    width = 0.2,
+    color = "black",
+    linewidth = 0.5,
+    position = position_dodge(width = 0)
+  ) +
+  geom_text(
+    data = opsn1_opsin2_condition.tidy %>% distinct(condition, total),
+    aes(x = condition, y = 105, label = paste0("n = ", total)),
+    inherit.aes = FALSE
+  ) +
+  scale_fill_manual(
+    values = c("attached_larvae" = "#384860", "swimming_larvae" = "gray70"),
+    labels = c("Attached", "Not Attached")
+  ) +
+  labs(x = "", y = "% larvae attached", fill = "Status") +
+  custom_theme() +
+  theme(legend.position = "top", panel.grid.major.x = element_blank())
+
+overExp_plot_onlyLower
+```
+
+## Statistical analysis
+
+### model specification - simple
+
+Fisher's exact test or Chi-square (\chi \^{2}) test are ok for yes/no response BUT does not account for biological replicates - they pool data thus ignore also variability.
+
+```{r statistical_tests_simple}
+# Statistical Analysis - Simple Tests
+################################################################################
+
+# ============================================================================
+# simple analysis: Attachment rates (yes/no)
+# ---- simple analysis: attachment rates (yes/no) ----
+
+# calculate totals per condition
+summary_stats <- opsn1_opsin2.tidy %>%
+  filter(status == "attached_larvae") %>%
+  group_by(condition) %>%
+  summarize(
+    n_replicates = n(),
+    attached = sum(count),
+    total = sum(total_larvae),
+    percent = (attached / total) * 100
+  )
+
+summary_stats %>%
+  kable(caption = "Summary statistics by condition") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+# Effect size (Cohen's h for proportions)
+p1 <- summary_stats$percent[1] / 100  # lacz
+p2 <- summary_stats$percent[2] / 100  # opsin2
+cohens_h <- 2 * (asin(sqrt(p2)) - asin(sqrt(p1)))
+cat("Cohen's h =", round(cohens_h, 3), "\n")
+
+
+#-------------------------------------------------------------------------------
+# Pooled across bioRep
+# Fisher’s exact test (better for small samples) vs chisq.test for larger samples
+#-------------------------------------------------------------------------------
+
+contingency_table <- opsn1_opsin2.df %>%
+  mutate(total_larvae = swimming_larvae + attached_larvae) %>%
+  group_by(condition) %>%
+  summarise(
+    attached = sum(attached_larvae),
+    swimming = sum(swimming_larvae)
+  ) %>%
+  column_to_rownames("condition") %>%
+  as.matrix()
+
+fisher_result <- fisher.test(contingency_table) # ==>Odds Ratio
+print(fisher_result)
+
+# effect size: odds ratio
+or <- (contingency_table[2, 1] * contingency_table[1, 2]) /
+  (contingency_table[1, 1] * contingency_table[2, 2])
+
+cat("\nOdds Ratio (opsin2/lacz):", round(or, 2), "\n")
+cat("Interpretation: opsin2 larvae are", round(or, 1),
+    "× more likely to attach than lacz\n")
+
+# ============================================================================
+# This is Chi-square test ==> same type of taste different n as input
+# chi_test <- chisq.test(contingency_table)
+# cat("χ² =", round(chi_test$statistic, 2), "\n")
+# cat("df =", chi_test$parameter, "\n")
+# cat("P-value:", format.pval(chi_test$p.value, digits = 3), "\n")
+
+#-------------------------------------------------------------------------------
+
+# this test doesnst really account for replicate variability, ill model with logistic regression model (binomial outcome: attached vs. total larvae)
+```
+
+### Binomial GLMM with Random Effects
+
+Electroporations are performed back-to-back for both the control (**LacZ**) and the experimental group (**Opsin2**). Embryos are from a pool of 4–5 adults. This process is repeated across five independent days/ Ciona shipments (biological replicates). We
+use a **Binomial Logistic Mixed Model (GLMM)** to account for the fact that larvae within the same batch are likely to be similar to each other than to those in other batches (**intra-class correlation**).
+
+The model is defined as: $$\operatorname{logit}(P(Y_{ij}=1)) = \beta_0 + \beta_1 \cdot \text{Condition}_j + u_i$$
+
+-   $Y_{ij}$: The binary outcome for the $j$-th larva in the $i$-th replicate.
+-   $\beta_0$: The fixed intercept, representing the baseline probability).
+-   $\beta_1$: The fixed effect representing the impact of **Opsin2** overexpression relative to the LacZ control.
+-   $u_i \sim N(0, \sigma^2)$: The random intercept for the $i$-th biological replicate, capturing batch-specific baseline shifts.
+
+```{r}
+# ============================================================================
+# Research Question:
+# Does overexpression of Opsin2 (via Opsin1 enhancer) increase larval 
+# attachment compared to LacZ control?
+#
+# Statistical Model:
+# logit(P(attached)) = β0 + β1·Condition + u_bioRep
+# where u_bioRep ~ N(0, σ²) accounts for electroporation batches
+#
+# H0: β1 = 0 (no difference between opsin2 and lacz)
+# ============================================================================
+```
+
+```{r glmm_analysis}
+#-------------------------------------------------------------------------------
+# Binomial GLMM with random effects:
+#-------------------------------------------------------------------------------
+
+# ---- fit GLMM with random effects ----
+glmer_model <- opsn1_opsin2.df %>%
+  mutate(total_larvae = swimming_larvae + attached_larvae) %>%
+  glmer(
+    cbind(attached_larvae, swimming_larvae) ~ condition + (1 | bioRep),
+    family = binomial,
+    data = .
+  )
+
+# # manually extract results
+# glmer_summary <- summary(glmer_model)
+# p_value <- coef(glmer_summary)[2, "Pr(>|z|)"]
+# glmer_fixef <- fixef(glmer_model) #fixed_effects
+# random_effects <- VarCorr(glmer_model) # random_effects 
+# 
+# or_value <- exp(fixef(glmer_model)["conditionopsin2"]) # get odds ratios
+# glmer_confint <- confint(glmer_model, method = "Wald", parm = "beta_") # confidence intervals for odds ratios
+# ci_profile <- confint(glmer_model, method = "profile", parm = "beta_") # Profile likelihood CIs (more accurate but slower)
+
+
+# cat("\nGLMM Results:\n")
+# cat("\nP-value for opsin2 vs lacz:", format.pval(coef(glmer_summary)["conditionopsin2", "Pr(>|z|)"], digits = 3), "\n")
+# cat("\nP-value for odds ratios:", exp(fixef(glmer_model)) , "\n")
+# cat("\nP-value Range CI:", confint(glmer_model, method = "Wald", parm = "beta_"), "\n")
+
+# Tidy results
+glmer_results <- broom.mixed::tidy(glmer_model, effects = "fixed", conf.int = TRUE) %>%
+  mutate(
+     # transform log-odds to odds ratios
+    odds_ratio = exp(estimate),
+    conf.low = exp(conf.low),
+    conf.high = exp(conf.high),
+    model_type = "GLMM",
+    # format p-values nicely
+    p.value_char = case_when(p.value < 0.001 ~ "< 0.001",TRUE ~ as.character(round(p.value, 4)))
+  )
+
+glance(glmer_model) %>%
+  kable(caption = "GLMM model fit statistics") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+glmer_results %>%
+  kable(caption = "Binomial GLMM results for larval attachment (Condition + (1|bioRep))",
+    align = "lcccccc",digits = 3,) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),full_width = FALSE,position = "center" ) %>%
+  row_spec(0, bold = TRUE, background = "#F2F2F2") %>%
+  footnote(general = "Model fit: glmer(cbind(attached, swimming) ~ condition + (1|bioRep), family = binomial). Reference level for condition is 'lacz'.")
+
+cat(sprintf("Opsin2 larvae are %.1fx more likely to attach than LacZ controls\n", glmer_results$odds_ratio[2]))
+cat(sprintf("This corresponds to a %.1f%% increase in odds of attachment\n", (glmer_results$odds_ratio[2] - 1) * 100))
+cat(sprintf("95%% CI: [%.3f, %.3f]",glmer_results$conf.low[2],glmer_results$conf.high[2]))
+
+
+```
+
+### Model comparison (GLM vs GLMM)
+
+To ensure the statistical model fits the data appropriately, compare a generalized linear model (GLM) and a generalized linear mixed model (GLMM) using an ANOVA-based likelihood ratio test (LTR). This test evaluates whether adding a random intercept
+($u_i$) significantly improves model fit.
+
+Null Hypothesis ($H_0$): The variance of the random effect is zero ($\sigma^2 = 0$). A GLM is sufficient. Alternative Hypothesis ($H_1$): The variance is significantly greater than zero. A GLMM is required, the random intercept is necessary to account for
+replicate variance.
+
+Variance Analysis: If the variance of the random effect ($u_i$) is approximately 0, the GLMM essentially collapses into a GLM. This usually occurs when the effect size is massive and highly consistent across all experimental batches.
+
+```{r glm_comparison}
+# Model GLM
+################################################################################
+
+# Fit GLM without random effects
+glm_model <- glm(
+  cbind(attached_larvae, swimming_larvae) ~ condition,
+  family = binomial,
+  data = opsn1_opsin2.df 
+  )
+
+# tidy model results
+glm_results <- broom.mixed::tidy(glm_model, conf.int = TRUE) %>%
+  mutate(
+    odds_ratio = exp(estimate),
+    conf.low = exp(conf.low),
+    conf.high = exp(conf.high),
+    model_type = "GLM"
+  )
+
+glm_results %>%
+  kable(caption = "GLM Results") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+
+#-------------------------------------------------------------------------------
+# Model Comparison (GLM vs GLMM)
+#-------------------------------------------------------------------------------
+
+# Combine extract model results for comparison
+model_comparison <- bind_rows(glm_results, glmer_results) %>%
+  filter(term == "conditionopsin2")
+
+# Likelihood ratio test  # to test significance of random effects
+lr_test <- anova(glm_model, glmer_model)
+
+lr_test %>%
+  kable(caption = "GLMM vs GLM Results") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+# Display comparison
+cat("=== Model Comparison ===\n")
+cat("Likelihood Ratio Test:\n")
+print(lr_test)
+cat("AIC:\n")
+print(AIC(glm_model, glmer_model))
+cat("\nOdds Ratio Comparison:\n")
+print(model_comparison[, c("model_type", "odds_ratio", "conf.low", "conf.high", "p.value")])
+
+```
+
+-   Consistency: GLM and GLMM give the same takeaway—opsin2 increases attachment a lot (OR ≈ 5–5.5; same direction and similar magnitude).
+-   Model fit: The GLMM fits much better than the GLM (AIC 82.6 vs 108.9; ΔAIC ≈ 26), supporting accounting for bioRep clustering.
+-   Precision: The GLMM is a bit more conservative. CIs are slightly wider because it models replicate-to-replicate variability.
+
+### Results table
+
+```{r}
+# Simplified results table
+results_table <- data.frame(
+  Analysis = c(
+    "Fisher's Exact Test (Pooled)",
+    "Binomial GLM (Fixed Effects)", 
+    "Binomial GLMM (Mixed Effects)",
+    "Effect Size (Cohen's h)"
+  ),
+  Result = c(
+    sprintf("OR = %.2f, p < 0.001", or),
+    sprintf("OR = %.2f (95%% CI: %.2f-%.2f), p < 0.001",
+            exp(coef(glm_model)[2]),
+            exp(confint(glm_model)[2,1]),
+            exp(confint(glm_model)[2,2])),
+    sprintf("OR = %.2f (95%% CI: %.2f-%.2f), p < 0.001",
+            exp(fixef(glmer_model)[2]),
+            exp(confint(glmer_model, method = "Wald")[2,1]),
+            exp(confint(glmer_model, method = "Wald")[2,2])),
+    sprintf("h = %.3f", cohens_h)
+  ),
+  Interpretation = c(
+    "Pooled analysis ignoring replicates",
+    "Fixed effects only. Accounts for overdispersion, not clustering",
+    "Accounts for replicate variability (primary)",
+    "Standardized difference between proportions"
+  ),
+  Source = c(
+    "fisher.test() on pooled contingency table",
+    "glm() with binomial family",
+    "glmer() with (1|bioRep)",
+    "2*(asin(√p₂)-asin(√p₁))"
+  )
+)
+
+# Display table
+results_table %>%
+  kable(
+    caption = "Statistical Analysis Results",
+    align = c("l", "l", "l", "l")
+  ) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) %>%
+  row_spec(3, bold = TRUE, background = "#E8F4F8") %>%  # Highlight GLMM
+  column_spec(1, width = "25%") %>%
+  column_spec(2, width = "25%") %>%
+  column_spec(3, width = "30%") %>%
+  column_spec(4, width = "20%") %>%
+  footnote(
+    general = "GLMM: Generalized Linear Mixed Model with random intercept for biological replicate (1|bioRep).",
+    general_title = "Note:",
+    footnote_as_chunk = TRUE
+  )
+```
+
+## Comparison confidence interval methods
+
+Comparison of confidence interval methods: - Normal CIs are symmetric (assumes unbounded data) - Wilson CIs are asymmetric (correct for proportions)
+
+```{r confidence_intervals}
+# Confidence Intervals
+################################################################################
+
+# Single calculation with Wilson CIs
+stats_with_ci <- opsn1_opsin2.tidy %>%
+  drop_na() %>%
+  filter(status == "attached_larvae") %>%
+  group_by(condition) %>%
+  summarize(
+    n_replicates = n(),
+    attached = sum(count),
+    total = sum(total_larvae),
+    mean_percent = mean(percent),
+    .groups = "drop"
+  ) %>%
+  rowwise() %>%
+  mutate(
+    # calculate 95% Wilson CI
+    wilson = list(binom.confint(attached, total, methods = "wilson")),
+    wilson_low = wilson$lower * 100,
+    wilson_high = wilson$upper * 100,
+    
+    # calculate 95 normal SE
+    p = attached / total,
+    se = sqrt(p * (1 - p) / total),
+    normal_low = (p - 1.96 * se) * 100,
+    normal_high = (p + 1.96 * se) * 100
+  ) %>%
+  ungroup() %>%
+  select(-wilson)  # Remove list column after extracting values
+
+# ---- Table comparing CI methods ----
+stats_with_ci %>%
+  mutate(
+    wilson_text = sprintf("%.1f%% (%.1f–%.1f%%)", mean_percent, wilson_low, wilson_high),
+    normal_text = sprintf("%.1f%% (%.1f–%.1f%%)", mean_percent, normal_low, normal_high)
+  ) %>%
+  select(condition, mean_percent, wilson_text, normal_text) %>%
+  kable(caption = "Comparison of CI methods") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+#-------------------------------------------------------------------------------
+# CI comparison plot
+#-------------------------------------------------------------------------------
+
+p_comparison <- stats_with_ci %>%
+  select(condition, mean_percent, wilson_low, wilson_high, normal_low, normal_high) %>%
+  pivot_longer(
+    cols = ends_with(c("_low", "_high")),
+    names_to = c("method", "bound"),
+    names_pattern = "(.*)_(.*)",
+    values_to = "value"
+  ) %>%
+  pivot_wider(names_from = bound, values_from = value) %>%
+  mutate(method = factor(method, levels = c("wilson", "normal"), 
+                         labels = c("Wilson", "Normal"))) %>%
+  
+  ggplot(aes(x = condition, y = mean_percent, color = method)) +
+  geom_point(size = 4, position = position_dodge(width = 0.3)) +
+  geom_errorbar(
+    aes(ymin = low, ymax = high),
+    width = 0.2, linewidth = 1,
+    position = position_dodge(width = 0.3)
+  ) +
+  scale_color_manual(values = c("Wilson" = "#0072B2", "Normal" = "#D55E00")) +
+  labs(
+    x = "", y = "Larvae Attached (%)", color = "CI Method",
+    title = "Comparison of Confidence Interval Methods"
+  ) +
+  theme(legend.position = "top") +
+  coord_cartesian(ylim = c(0, 100))
+
+p_comparison
+
+#-------------------------------------------------------------------------------
+# bar plot with Wilson CI and  individual point
+#-------------------------------------------------------------------------------
+ggplot() +
+  geom_col(
+    data = stats_with_ci,
+    aes(x = condition, y = mean_percent),
+    fill = "#1f7070", color = "black", width = 0.6, alpha = 0.7
+  ) +
+  geom_errorbar(
+    data = stats_with_ci,
+    aes(x = condition, ymin = wilson_low, ymax = wilson_high),
+    width = 0.15, linewidth = 0.8, color = "black"
+  ) +
+  geom_point(
+    data = filter(opsn1_opsin2.tidy, status == "attached_larvae"),
+    aes(x = condition, y = percent),
+    shape = 21, fill = "white", color = "black", size = 3, stroke = 1,
+    position = position_jitter(width = 0.05, height = 0)
+  ) +
+  geom_text(
+    data = stats_with_ci,
+    aes(x = condition, y = wilson_high + 15, label = paste0("n=", total)),
+    size = 3.5, vjust = 0
+  ) +
+  labs(y = "Larvae Attached (%)", x = "Condition") +
+  scale_y_continuous(limits = c(0, 110), breaks = seq(0, 100, 20)) +
+  custom_theme()
+```
+
+## Figure 4C: stacked plot with Wilson CIs
+
+```{r main_figure, fig.width=10, fig.height=8}
+# Figure 4C
+################################################################################
+# ---- Merge CI data with positioning info for stacked bars ----
+# Rename stats_with_ci to match your naming convention + add BiCI column names
+opsn1_opsin2_BiCI.df <- stats_with_ci %>%
+  rename(BiCI_low = wilson_low, BiCI_high = wilson_high)
+
+
+# merge CI data with positioning info
+CI_data <- opsn1_opsin2_summary.df %>%
+  # align status names between datasets
+  mutate(status = case_when(
+    status == "attached_larvae" ~ "attached",
+    status == "swimming_larvae" ~ "not_attached",
+    TRUE ~ status
+  )) %>%
+  left_join(
+    opsn1_opsin2_BiCI.df %>% select(condition, BiCI_low, BiCI_high),
+    by = "condition"
+  ) %>%
+  # calculate error bar positions on stacked bars
+  mutate(
+    BiCI_low_position = y_start + BiCI_low - mean_percent,
+    BiCI_high_position = y_start + BiCI_high - mean_percent
+  )
+
+# CI positioning table
+CI_data %>%
+  select(condition, status, mean_percent, y_start, BiCI_low, BiCI_high,
+         BiCI_low_position, BiCI_high_position) %>%
+  kable(caption = "CI positions for error bars") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+# ---- create main figure ----
+opsin2_plot_BiCI <- ggplot(
+  opsn1_opsin2_summary.df,
+  aes(x = condition, y = mean_percent, fill = status)
+) +
+  geom_col(width = 0.7, alpha = 0.8, color = "black") +
+  # Error bars at attachment boundary
+  geom_errorbar(
+    data = filter(CI_data, status == "attached"),
+    aes(ymin = BiCI_low_position, ymax = BiCI_high_position),
+    width = 0.25, color = "black", linewidth = 0.8
+  ) +
+  # Sample size labels
+  geom_text(
+    data = opsn1_opsin2_BiCI.df,
+    aes(x = condition, y = 110, label = paste0("n=", total)),
+    inherit.aes = FALSE, size = 7
+  ) +
+  scale_fill_manual(
+    values = c("attached_larvae" = "#1f7070", "swimming_larvae" = "gray70"),
+    labels = c("Attached", "Swimming")
+  ) +
+  labs(x = "", y = "Percentage of Larvae (%)", fill = "Attachment Status") +
+  coord_cartesian(ylim = c(0, 110)) +
+  scale_y_continuous(breaks = c(0, 20, 50, 75, 100)) +
+  # Significance brackets
+  stat_pvalue_manual(
+    data = data.frame(
+      group1 = "lacz",
+      group2 = "opsin2",
+      p.signif = "****",
+      status = "attached",
+      y.position = 105
+    ),
+    label = "p.signif",
+    tip.length = 0.01,
+    bracket.size = 0.6
+  ) +
+  theme(
+    legend.position = "top",
+    panel.grid.major.x = element_blank()
+  ) +
+  custom_theme()
+
+opsin2_plot_BiCI
+```
+
+```{r}
+# # Figure 4C
+# ################################################################################
+# 
+# # repetitive from scratce
+# # ---- calculate totals per condition ----
+# attached_total.df <- opsn1_opsin2.tidy %>%
+#   drop_na() %>%
+#   filter(status == "attached_larvae") %>%
+#   group_by(condition) %>%
+#   summarize(
+#     n_replicates = n(),
+#     attached = sum(count),
+#     total = sum(total_larvae),
+#     mean_percent = mean(percent),
+#     percent = (attached / total) * 100
+#   )
+# 
+# # ---- calculate wilson CIs ----
+# opsn1_opsin2_BiCI.df <- attached_total.df %>%
+#   rowwise() %>%
+#   mutate(
+#     ci = list(binom.confint(attached, total, methods = "wilson")),
+#     BiCI_low = ci$lower * 100,
+#     BiCI_high = ci$upper * 100
+#   ) %>%
+#   select(-ci)
+# 
+# 
+# # merge CI data with positioning info
+# CI_data <- opsn1_opsin2_summary.df %>%
+#   # align status names between datasets
+#   mutate(status = case_when(
+#     status == "attached_larvae" ~ "attached",
+#     status == "swimming_larvae" ~ "not_attached",
+#     TRUE ~ status
+#   )) %>%
+#   left_join(
+#     opsn1_opsin2_BiCI.df %>% select(-mean_percent),
+#     by = c("condition")
+#   ) %>%
+#   # calculate error bar positions
+#   mutate(
+#     BiCI_low_position = y_start + BiCI_low - mean_percent,
+#     BiCI_high_position = y_start + BiCI_high - mean_percent
+#   )
+# 
+# CI_data %>%
+#   select(
+#     condition, status, mean_percent, y_start, BiCI_low, BiCI_high,
+#     BiCI_low_position, BiCI_high_position
+#   ) %>%
+#   kable(caption = "CI positions for error bars") %>%
+#   kable_styling(bootstrap_options = c("striped", "hover"))
+# 
+# # ---- create main figure ----
+# 
+# opsin2_plot_BiCI <- ggplot(
+#   opsn1_opsin2_summary.df,
+#   aes(x = condition, y = mean_percent, fill = status)
+# ) +
+#   geom_col(width = 0.7, alpha = 0.8, color = "black") +  # stacked bars
+#   # error bars at attachment boundary
+#   geom_errorbar(
+#     data = CI_data %>% filter(status == "attached"),
+#     aes(ymin = BiCI_low_position, ymax = BiCI_high_position),
+#     width = 0.25,
+#     color = "black",
+#     linewidth = 0.8
+#   ) +
+#   # sample size labels
+#   geom_text(
+#     data = opsn1_opsin2_BiCI.df %>%
+#       group_by(condition) %>%
+#       summarize(total = first(total)),
+#     aes(x = condition, y = 110, label = paste0("n=", total)),
+#     inherit.aes = FALSE,
+#     size = 7
+#   ) +
+#   scale_fill_manual(
+#     values = c("attached_larvae" = "#1f7070", "swimming_larvae" = "gray70"),
+#     labels = c("Attached", "Swimming")
+#   ) +
+#   labs(x = "", y = "Percentage of Larvae (%)", fill = "Attachment Status") +
+#   theme(
+#     legend.position = "top",
+#     panel.grid.major.x = element_blank()
+#   ) +
+#   coord_cartesian(ylim = c(0, 110)) +
+#   scale_y_continuous(breaks = c(0, 20, 50, 75, 100)) +
+#   # significance brackets and stars
+#   stat_pvalue_manual(
+#     data = data.frame(
+#       group1 = "lacz",
+#       group2 = c("opsin2"),
+#       p.signif = c("****"),  # GLMM p-values
+#       status = c("attached"),
+#       y.position = c(105)
+#     ),
+#     label = "p.signif",
+#     tip.length = 0.01,
+#     bracket.size = 0.6
+#   ) +
+#   custom_theme()
+# 
+# opsin2_plot_BiCI
+```
+
+## Save Plots
+
+```{r save_plots}
+message("\n✓ Analysis complete!")
+message("Outputs saved to: ", out_dir)
+message("Main figure: ", opath("main_figure.pdf"))
+message("Results table: ", opath("results_summary.csv"))
+
+# Save plots only if SAVE_OUTPUTS is TRUE
+if (exists("SAVE_OUTPUTS") && SAVE_OUTPUTS) {
+  
+  # Save main figure (use your final figure object name)
+  if (exists("main_figure")) {
+    # Save with cowplot
+    cowplot::save_plot(
+      plot = main_figure,
+      filename = opath("opsin2_overexpression_main.pdf"),
+      base_width = 8,
+      base_height = 6
+    )
+    
+    # Save with CairoPDF
+    CairoPDF(
+      filename = opath("opsin2_overexpression_main_cairo.pdf"),
+      width = 8,
+      height = 6
+    )
+    print(main_figure)
+    dev.off()
+  }
+  
+  # If you have other specific plots, save them too
+  if (exists("final_figure")) {
+    ggsave(
+      filename = opath("final_figure.pdf"),
+      plot = final_figure,
+      width = 8,
+      height = 6,
+      device = cairo_pdf
+    )
+  }
+  
+  message("\nPlots saved to: ", out_dir)
+}
+```
+
+```{r session_info}
+sessionInfo()
+```

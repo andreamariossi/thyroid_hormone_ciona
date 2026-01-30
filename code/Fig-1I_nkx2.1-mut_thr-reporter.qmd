@@ -1,0 +1,437 @@
+---
+title: "Fig-1I_Nkx2.1 Mutant Thr Reporter"
+author: "Andrea Mariossi"
+format:
+  html:
+    embed-resources: true
+    toc: true
+    toc-location: left
+    toc-depth: 5
+    code-fold: false
+    code-line-numbers: true
+    page-layout: article
+    grid:
+      sidebar-width: 100px
+      body-width: 2000px
+      margin-width: 100px
+      gutter-width: 3.5rem
+execute:
+  echo: true
+  warning: false
+  message: true
+fig-width: 18
+fig-height: 10
+fig-align: center
+fig-format: png
+out-width: "90%"
+editor_options:
+  chunk_output_type: inline
+---
+
+-   **Inputs** come either from my local folder or from the repository’s folder (when downloaded from GitHub).
+-   **Outputs** of GitHub are written to a new local folder named `output_rerun/`
+
+## Setup
+
+```{r setup}
+rm(list = ls())
+
+# ---- packages ----
+suppressPackageStartupMessages({
+  # Data manipulation & plotting
+  library(tidyverse)   # dplyr, ggplot2, etc. (%>%, mutate, ggplot, ...)
+  library(readxl)      # read_excel()
+  
+  # Special geoms
+  library(ggdist)      # stat_halfeye(), stat_dots()
+  library(ggbeeswarm)  # position_beeswarm()
+  library(ggpubr)      # theme_pubr(), stat_compare_means()
+  
+  # Mixed models
+  #library(lme4)        # lmer()
+  #library(lmerTest)    # p-values/df for lmer models
+  library(performance)
+  library(DHARMa)
+  library(performance) # Model diagnostics
+  library(DHARMa)      # Residual diagnostics
+  library(car)         # Anova tables
+  library(knitr)       # Table formatting
+  library(kableExtra)  # Table styling
+  library(Cairo)       # PDF rendering
+  library(cowplot)     # Plot saving
+})
+```
+
+## Configuration
+
+```{r}
+# ---- path configuration ----
+# Script lives in /code, data lives in /source_data
+data_dir <- file.path("..", "source_data")
+out_dir  <- file.path("..", "output")
+SAVE_OUTPUTS <- TRUE 
+
+if (!dir.exists(out_dir)) dir.create(out_dir, showWarnings = FALSE)
+
+# Path helpers
+dpath <- function(...) file.path(data_dir, ...)
+opath <- function(...) file.path(out_dir, ...)
+
+# Load data
+h2b_cells.df <- readxl::read_excel(dpath("2_thr_h2b_cells.xlsx")) %>%
+  mutate(replicate = as.factor(replicate))
+
+```
+
+```{r config}
+# 
+# # ---- configuration ----
+# pick_pipeline <- "local"  # "local" or "github"
+# 
+# # ---- my paths (inputs+outputs) ----
+file_path <- "/Users/andrea/Library/CloudStorage/GoogleDrive-andrea.mariossi@gmail.com/My Drive/4.paper_archive/2025_thyroid_pathway_&_metamorphosis/04.SciAdv_rev/source_data"
+# out_dir   <- file.path(file_path, "output")
+# 
+# # ---- github repo paths ----
+# repo_dir <- here()
+# 
+# # fallback: check if repo exists in Downloads folder
+# if (!dir.exists(file.path(repo_dir, "data"))) {
+#   repo_dir_try <- path.expand("~/Downloads/thyroid_hormone_ciona-main")
+#   if (dir.exists(file.path(repo_dir_try, "data"))) {
+#     repo_dir <- repo_dir_try
+#   }
+# }
+# 
+# # ---- switch ----
+# 
+# if (pick_pipeline == "local") {
+#   data_dir <- file_path
+#   SAVE_OUTPUTS <- TRUE
+#   dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+#   opath <- function(...) file.path(out_dir, ...)
+# 
+# } else if (pick_pipeline == "github") {
+#   data_dir <- file.path(repo_dir, "data")
+#   stopifnot(dir.exists(data_dir))
+# 
+#   SAVE_OUTPUTS <- TRUE
+#   out_dir <- file.path(repo_dir, "output")
+#   dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+#   opath <- function(...) file.path(out_dir, ...)
+# 
+# } else {
+#   stop("pick_pipeline must be either 'local' or 'github'")
+# }
+# 
+# dpath <- function(...) file.path(data_dir, ...)
+# 
+# message("Pipeline: ", pick_pipeline)
+# message("Data dir (inputs): ", data_dir)
+# message("Outputs enabled: ", SAVE_OUTPUTS)
+# if (SAVE_OUTPUTS) message("Outputs dir: ", out_dir)
+
+```
+
+## Theme & Style
+
+```{r theme}
+# ---- theme & style ----
+custom_theme <- function() {
+  theme(
+    axis.ticks = element_line(linewidth = 0.5),
+    axis.ticks.length = unit(0.09, "cm"),
+    legend.key.height = unit(20, "pt"),
+    axis.line = element_blank(),
+    panel.border = element_rect(colour = "black", fill = NA, linewidth = 1),
+    panel.background = element_blank(),
+    plot.background = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    legend.background = element_blank(),
+    legend.box.background = element_blank(),
+    legend.key = element_blank(),
+    strip.background = element_blank()
+  )
+}
+
+theme_set(theme_pubr(base_size = 13, base_family = "Helvetica") + custom_theme())
+no_legend <- theme(legend.position = "none")
+
+# ---- color palette ----
+condition_colors <- c("Control" = "#1b9e77", "Mutant" = "#d95f02")
+raincloud_colors <- c("Control" = "#A20842", "Mutant" = "#E15759")
+replicate_shapes <- c(21, 22, 23)  # circle, square, diamond — all fillable
+
+# ---- pretty p-values for kable ----
+format_pvalues <- function(df) {
+  df %>%
+    mutate(across(
+      any_of(c("p.value", "p.value.x", "p.value.y", "adj.p.value")),
+      ~ case_when(
+        . < 0.001 ~ format(., scientific = TRUE, digits = 2),
+        TRUE ~ as.character(round(., 4))
+      )
+    ))
+}
+```
+
+## Load Data
+
+```{r load_data}
+# h2b_file <- dpath("2_thr_h2b_cells.xlsx") 
+# stopifnot(file.exists(h2b_file))
+# 
+# h2b_cells.df <- read_excel(h2b_file) %>%
+#   mutate(replicate = as.factor(replicate))
+
+# display first rows
+h2b_cells.df %>%
+  head() %>%
+  kable(caption = "H2B-positive cells data (first 6 rows)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+# summary statistics
+summary_data <- h2b_cells.df %>%
+  group_by(condition) %>%
+  dplyr::summarise(
+    mean = mean(h2b_cells),
+    sd = sd(h2b_cells),
+    n = n(),
+    se = sd / sqrt(n)
+  )
+
+summary_data %>%
+  kable(caption = "Summary statistics by condition") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+# replicate-level summary
+rep_level <- h2b_cells.df %>%
+  group_by(condition, replicate) %>%
+  dplyr::summarise(mean_cells = mean(h2b_cells), .groups = "drop")
+
+rep_level %>%
+  kable(caption = "Mean cells per replicate") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+## Statistical Analysis
+
+### Linear model
+
+Fit a simple linear regression to compare H2B cell counts between conditions:
+
+$$
+y_{ij} = \beta_0 + \beta_1\,\text{Condition}_i + \epsilon_{ij},
+$$
+
+where $y_{ij}$ is the H2B cell count for observation (j) in condition (i) and $\epsilon_{ij}$ is the error
+
+In the model (`lm(h2b_cells ~ condition)`), `condition` is treated as a two-level factor and can be written as an indicator variable:
+
+$$
+{h2b-cells} = \beta_0 + \beta_1\,I(\text{Mutant}) + \epsilon,
+$$
+
+-   Intercept (β0): the mean H2B cell count in the reference condition.
+-   Condition effect (β1): the difference in mean H2B cell count between Mutant and the reference condition:
+
+$$
+\beta_1 = \mathbb{E}[y \mid \text{Mutant}] - \mathbb{E}[y \mid \text{Reference}].
+$$
+
+```{r mixed_model}
+#----------------------------------------------------------------------------------
+# linear model
+#----------------------------------------------------------------------------------
+lm_fit<- lm(h2b_cells ~ condition, data = h2b_cells.df)
+
+# get ANOVA results
+anova_results <- anova(lm_fit)
+anova_results
+
+summary(lm_fit)
+# plot(lm_fit)
+# High R² = 0.7966 → Condition explains ~80% of variance
+# Highly significant: p < 2.2e-16
+
+# extract p-value for condition effect
+p_value <- anova_results$`Pr(>F)`[1]
+cat(sprintf("\nP-value for condition effect: %.4f\n", p_value))
+
+# wald chi-square test
+cat("\nType II Wald Test:\n")
+print(car::Anova(lm_fit, type = 2))
+
+# ---- replicate check ----
+# Quick check to verify if 'replicate' acts as a significant batch effect
+res_aov <- aov(h2b_cells ~ condition + replicate, data = h2b_cells.df)
+summary(res_aov) 
+# Note: p=0.173 for replicate indicates no significant batch effect, 
+
+```
+
+### **Linear mixed-effects model -**
+
+-   fixed effects (condition)
+
+-   only Random effects (replicate-to-replicate variability) <!-- -->
+
+-   The random intercept for **replicate** has variance **1.473** (SD **1.214**), indicating **very little variation between experiments** (replicates are highly consistent).
+
+-   The **residual** variance is **68.185** (SD **8.257**), showing that **most variability occurs embryo-to-embryo within a replicate**, rather than across experiments.
+
+-   **conditionMutant** Simple Linear Model:\*\*
+
+-   `Intercept:`**= 66.764** → Mean H2B-positive cell count for control (wild type) embryos.
+
+-   `conditionMutant` = -32.795 (p \< 2.2e-16)\*\* → Mutant embryos have **\~32.8 fewer H2B-positive cells** compared to controls.
+
+-   `Wild type embryos`: \~66.8 H2B-positive cells per embryo.
+
+-   `Mutant embryos`: \~34.0 H2B-positive cells per embryo (66.764 - 32.795).
+
+Mutant effect: A highly significant reduction of approximately 33 H2B-positive cells (p \< 0.0001), representing a \~49% decrease relative to wild type.
+
+### Model Diagnostics
+
+```{r}
+#| label: model-diagnostics
+#| fig-width: 12
+#| fig-height: 10
+
+# 1. visual check of the assumptions of categorical linear model
+# (Normality, Homoscedasticity, Linearity, and Outliers)
+performance::check_model(lm_fit) 
+
+# 2. Specific Numerical Tests
+performance::check_normality(lm_fit)           # Do residuals follow a bell curve?
+performance::check_heteroscedasticity(lm_fit)  # Is the spread of data even across groups? 
+# Note: p=0.048 is borderline but acceptable given DHARMa results
+performance::check_outliers(lm_fit)            # Are any embryos "extreme" enough to skew results?
+
+# 3. DHARMa: Simulated residuals 
+# Especially helpful for count data to check for "overdispersion"
+simulation_res <- simulateResiduals(lm_fit)
+plot(simulation_res)
+
+```
+
+## Main Figure: Raincloud Plot
+
+```{r raincloud_plot, fig.width=12, fig.height=7}
+#| fig-width: 12
+#| fig-height: 7
+#| out-width: 100%
+# ___________________
+# ---- final raincloud plot with replicate shapes and stats ----
+th_raincloud_plot <- ggplot(h2b_cells.df, aes(x = condition, y = h2b_cells, fill = condition)) +
+  stat_halfeye(adjust = 0.9, width = 0.6, justification = -0.3, .width = 0,
+               point_colour = NA, alpha = 0.5) +
+  geom_boxplot(width = 0.12, outlier.shape = NA, alpha = 0.8, color = "black",
+               position = position_nudge(x = 0.22)) +
+  geom_point(aes(shape = replicate,fill = condition),
+             position = position_beeswarm(dodge.width = 0.3, cex = 1.5),
+             size = 4,  alpha = 0.3) +
+  scale_fill_manual(values = raincloud_colors) +
+  scale_shape_manual(values = replicate_shapes) +
+  labs(x = "", y = "# H2B-positive cells") +
+  custom_theme() +
+   theme(
+    legend.position = c(0.1,0.2),
+    legend.box = "horizontal",
+    legend.text = element_text(size = 18),  # Adjust legend key labels
+    legend.title = element_text(size = 20, face = "plain") # Adjust legend title
+  ) +
+  guides(fill = "none", condition = "none",
+         shape = guide_legend(title = "Replicate")) +
+  stat_compare_means(
+    comparisons = list(c("Control", "Mutant")),
+    symnum.args = list(cutpoints = c(0, 0.0001),symbols = c("***")),
+    label.y     = max(h2b_cells.df$h2b_cells)*1.05,
+    size        = 8,
+    vjust = .3,
+    tip.length = 0,
+    bracket.size = 1
+  ) 
+
+th_raincloud_plot
+```
+
+Mutant embryos have \~33 fewer reporter-positive cells per embryo than controls, consistently across the three experiment
+
+## Alternative Visualizations
+
+```{r alternative_plots, fig.width=12, fig.height=7}
+#| fig-width: 12
+#| fig-height: 7
+#| out-width: 100%
+#
+# ---- basic boxplot with jitter ----
+ggplot(h2b_cells.df, aes(x = condition, y = h2b_cells, fill = condition)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.2, alpha = 0.5) +
+  scale_fill_manual(values = condition_colors) +
+  labs(x = "Condition", y = "H2B-positive cell count") +
+  custom_theme() +
+  theme(legend.box = "horizontal")
+
+# ---- violin + boxplot ----
+ggplot(h2b_cells.df, aes(x = condition, y = h2b_cells, fill = condition)) +
+  geom_violin(trim = FALSE) +
+  geom_boxplot(width = 0.1, fill = "white") +
+  scale_fill_manual(values = condition_colors) +
+  labs(x = "Condition", y = "H2B-positive cell count") +
+  custom_theme() +
+  theme(legend.box = "horizontal")
+
+# ---- half-eye plot + boxplot + dots ----
+ggplot(h2b_cells.df, aes(x = condition, y = h2b_cells, fill = condition)) +
+  stat_halfeye(
+    adjust = 0.5, justification = -0.2, .width = 0, point_colour = NA
+  ) +
+  geom_boxplot(width = 0.12, outlier.shape = NA) +
+  stat_dots(side = "left", justification = 1.1, binwidth = 1) +
+  scale_fill_manual(values = condition_colors) +
+  labs(x = "Condition", y = "H2B-positive cell count") +
+  custom_theme()
+```
+
+## Save Plots
+
+```{r save_plots}
+if (SAVE_OUTPUTS) {
+  
+  width_in <- 40
+  aspect_ratio <- 3/4
+  height_in <- width_in * aspect_ratio
+  
+  width_mm <- 4 * width_in / 25.4
+  height_mm <- 4 * height_in / 25.4
+  
+  # save with CairoPDF
+  CairoPDF(
+    opath("fig1I_nkx2.1-mut_thr-reporter.pdf"),
+    width = width_mm,
+    height = height_mm
+  )
+  print(th_raincloud_plot)
+  dev.off()
+  
+  # save with cowplot
+  cowplot::save_plot(
+    plot = th_raincloud_plot,
+    base_height = 1.9 * 3.71,
+    base_asp = 0.9 * 1.618,
+    file = opath("fig1I_nkx2.1-mut_thr-reporter_cowplot.pdf")
+  )
+  
+  message("\nPlots saved to: ", out_dir)
+}
+```
+
+## Session Info
+
+```{r session_info}
+sessionInfo()
+```

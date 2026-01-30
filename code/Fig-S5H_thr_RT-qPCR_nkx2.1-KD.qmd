@@ -1,49 +1,49 @@
 ---
 title: "Fig-S5H_thr_RT-qPCR_nkx2.1-KD"
 author: "Andrea Mariossi"
-format: 
+
+format:
   html:
+    embed-resources: true
+    toc: true
+    toc-location: left
+    toc-depth: 5
     code-fold: false
-    embed-resources: true 
-engine: knitr
-editor: visual
-grid: 
-  sidebar-width: 100px
-  body-width: 2000px
-  margin-width: 100px
-  gutter-width: 3.5rem
+    code-line-numbers: true
+    page-layout: article
+    grid:
+      sidebar-width: 100px
+      body-width: 2000px
+      margin-width: 100px
+      gutter-width: 3.5rem
 execute:
-  fig-align: center
+  echo: true
+  warning: false
+  message: true
+  
+fig-width: 18
+fig-height: 10
+fig-align: center
+fig-format: png
+out-width: "90%"
+
+editor_options:
+  chunk_output_type: inline
 ---
 
-# Nkx2.1 CRISPR-Cas9 RT-qPCR
+## Setup
 
----
-# #| column: screen
-# #| out-width: 50%
-# #| column: screen
-# #| out-width: 50%
-# #| fig-format: svg
-# #| fig-align: center
----
+Inputs come either from my local folder or from the repository's folder (when downloaded from GitHub).
 
-```{r}
-knitr::opts_chunk$set(
-  echo = TRUE,
-  message = FALSE, 
-  warning = FALSE,
-  # fig.width = 8,
-  # fig.height = 6,
-  fig.align = "center",
-  out.width = "70%",
-  column = "page"
-)
+Outputs are written to the `output/` folder.
+
+```{r setup}
 
 rm(list = ls())
 
-# Package loading
+# package loading
 suppressPackageStartupMessages({
-  # Data manipulation & file import
+  library(here)
   library(tidyverse)
   library(readxl)
   library(paletteer)
@@ -55,24 +55,73 @@ suppressPackageStartupMessages({
   library(lmerTest)
   library(emmeans)
   library(kableExtra)
-  })
+  library(patchwork)
+})
+```
+
+## Configuration
+
+```{r config}
+
+# ---- configuration ----
+pick_pipeline <- "local"  # "local" or "github"
+
+# ---- my paths (inputs+outputs) ----
+file_path <- "/Users/andrea/Library/CloudStorage/GoogleDrive-andrea.mariossi@gmail.com/My Drive/4.paper_archive/2025_thyroid_pathway_&_metamorphosis/04.SciAdv_rev/source_data"
+
+out_dir   <- file.path(file_path, "output")
+
+# ---- GITHUB repo paths ----
+repo_dir <- here()
+
+# Fallback: check if repo exists in Downloads folder
+if (!dir.exists(file.path(repo_dir, "data"))) {
+  repo_dir_try <- path.expand("~/Downloads/thyroid_hormone_ciona-main")
+  if (dir.exists(file.path(repo_dir_try, "data"))) {
+    repo_dir <- repo_dir_try
+  }
+}
+
+# ---- switch ----
+if (pick_pipeline == "local") {
+  data_dir <- file_path
+  SAVE_OUTPUTS <- TRUE
+  dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+  opath <- function(...) file.path(out_dir, ...)
+  
+} else if (pick_pipeline == "github") {
+  data_dir <- file.path(repo_dir, "data")
+  stopifnot(dir.exists(data_dir))
+  
+  SAVE_OUTPUTS <- TRUE
+  out_dir <- file.path(repo_dir, "output")
+  dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+  opath <- function(...) file.path(out_dir, ...)
+  
+} else {
+  stop("pick_pipeline must be either 'local' or 'github'")
+}
+
+dpath <- function(...) file.path(data_dir, ...)
+
+message("Pipeline: ", pick_pipeline)
+message("Data dir (inputs): ", data_dir)
+message("Outputs enabled: ", SAVE_OUTPUTS)
+if (SAVE_OUTPUTS) message("Outputs dir: ", out_dir)
 
 ```
 
-## Data Loading and Preprocessing
+## Theme & Style
 
-```{r}
-# ===== path =====
-file_path <- "/Users/andrea/Princeton Dropbox/Andrea Mariossi/4.paper_archive/2025_thyroid_pathway_&_metamorphosis/3.1.ScienceAdvances_submission_rev/tables/"
-
-# ===== theme & style =====
+```{r theme}
+# ---- theme & style ----
 custom_theme <- function() {
   theme(
-    axis.ticks = element_line(size = 0.5),
+    axis.ticks = element_line(linewidth = 0.5),
     axis.ticks.length = unit(0.09, "cm"),
     legend.key.height = unit(20, "pt"),
     axis.line = element_blank(),
-    panel.border = element_rect(colour = "black", fill = NA, size = 1),
+    panel.border = element_rect(colour = "black", fill = NA, linewidth = 1),
     panel.background = element_blank(),
     plot.background = element_blank(),
     panel.grid.major = element_blank(),
@@ -80,27 +129,35 @@ custom_theme <- function() {
     legend.background = element_blank(),
     legend.box.background = element_blank(),
     legend.key = element_blank(),
-    strip.background = element_blank(),
+    strip.background = element_blank()
   )
 }
 
+# If using Arial font 
+# library(showtext)
+# library(sysfonts)
+# sysfonts::font_add("Arial", regular = "/Library/Fonts/Arial.ttf")  # macOS 
+# # sysfonts::font_add("Arial", regular = "C:/Windows/Fonts/arial.ttf")  # Windows
+# showtext_auto()
+# theme_set(theme_pubr(base_size = 13, base_family = "Arial") + custom_theme())
+
 # ===== set theme =====
-theme_set(theme_pubr(base_size = 13,
-                     base_family = "Helvetica") + custom_theme())
+theme_set(theme_pubr(base_size = 13, base_family = "sans") + custom_theme())
 
 # ===== extra bits =====
 no_legend <- theme(legend.position = "none")
 axis_text_45 <- theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
 
-# ===== color palette =====
+# ---- color palette ----
 contPalette <- paletteer_c("ggthemes::Red-Green-Gold Diverging", 30)
 
+# Stage ordering used throughout (edit if needed)
 stage_order <- c("earTII", "midTII", "latTII", "latTIII", "larva")
 
-# ===== pretty p-values for kable =====
+# ---- pretty p-values for kable ----
 format_pvalues <- function(df) {
   df %>%
-    mutate(across(any_of(c("p.value", "p.value.x", "p.value.y", "adj.p.value")), 
+    mutate(across(any_of(c("p.value", "p.value.x", "p.value.y", "adj.p.value", "p.adj")),
                   ~ case_when(
                     . < 0.001 ~ format(., scientific = TRUE, digits = 2),
                     TRUE ~ as.character(round(., 4))
@@ -108,51 +165,99 @@ format_pvalues <- function(df) {
 }
 ```
 
+## Load Data
+
+```{r load_data}
+qpcr_file <- dpath("3_sgNkx2.1_thr_qPCR.xlsx")
+stopifnot(file.exists(qpcr_file))
+
+qPCR_GRN <- read_excel(qpcr_file)
+
+qPCR_GRN <- qPCR_GRN %>%
+  mutate(stage = factor(stage, levels = stage_order))
+
+kable(head(qPCR_GRN), caption = "Raw qPCR Data (first 6 rows)")
+```
+
 ## Quality Control: Raw Ct Values
 
-```{r}
-# Load data
-qPCR_GRN <- read_excel(paste0(file_path,"4_sgNkx2.1_thr_qPCR.xlsx"))
-qPCR_GRN
-
-qPCR_GRN <- qPCR_GRN |> dplyr::mutate(
-    stage = factor(
-      stage,
-      levels = c("earTII", "midTII", "latTII", "latTIII", "larva")
-    )
-  )
-# Calculating average Ct values for technical replicates
+```{r qc_raw_ct}
+# calculating average Ct values for technical replicates
 summarised_data <- qPCR_GRN %>%
   pivot_longer(cols = 5:10, names_to = "type", values_to = "Ct") %>%
   separate(type, into = c("gene", "tecRep"), sep = "_", convert = TRUE) %>%
-  mutate(gene = as.factor(gene),
-         bioRep = as.numeric(bioRep)) |>
-  #        bioRep = as.numeric(gsub("tecRep", "", bioRep))) |> 
-  group_by(gene, group,stage,hpf,bioRep) %>%
+  mutate(
+    gene = as.factor(gene),
+    bioRep = as.numeric(bioRep)
+      #        bioRep = as.numeric(gsub("tecRep", "", bioRep))) |> 
+  ) %>%
+  group_by(gene, group, stage, hpf, bioRep) %>%
   summarise(mean_Ct = mean(Ct), .groups = "drop")
 
-# Plot average Ct values
-# actin & thr
+# plot average Ct values - actin & thr
 ct_plot <- ggplot(summarised_data, aes(x = group, y = mean_Ct, colour = hpf)) +
   geom_point(size = 2, alpha = 0.7) +
   scale_color_gradientn(colors = contPalette, name = "early to late hpf") +
   facet_wrap(~ gene, scales = "fixed") +
-  custom_theme()
-
-# just actin
-ggplot(summarised_data |> filter(gene== "actin"), aes(x = group, y = mean_Ct, colour = hpf)) +
-  geom_point(size = 2, alpha = 0.7) +
-  scale_color_gradientn(colors = contPalette, name = "early to late hpf") +
-  facet_wrap(~ gene, scales = "free_y") +
+  labs(title = "Raw Ct Values: Actin and Thr") +
   custom_theme()
 
 ct_plot
-# ggplotly(ct_plot)
+
+raw_ct_plot <- summarised_data %>%
+  ggplot(aes(x = stage, y = mean_Ct, colour = hpf)) +
+  geom_point(size = 2, alpha = 0.7, position = position_jitter(width = 0.12, height = 0)) +
+  facet_wrap(~ gene, scales = "free_y") +
+  scale_color_gradientn(colors = contPalette, name = "early → late hpf") +
+  labs(
+    x = "",
+    y = "Mean Ct (technical replicates averaged)",
+    title = "Raw Ct quality control"
+  ) +
+  custom_theme() +
+  theme(legend.position = "right")
+
+raw_ct_plot
+
+```
+
+### Confirm Actin Stability
+
+Actin: Non-significant effects - reference gene is stable
+
+```{r actin_stability}
 
 #--------------------------------------------------------------------------------
 # confirm actin Ct values don't change with treatment/development
 #--------------------------------------------------------------------------------
 
+actin_ct_plot_a <- ggplot(
+  summarised_data %>% filter(gene == "actin"),
+  aes(x = group, y = mean_Ct, colour = hpf)
+) +
+  geom_point(size = 2, alpha = 0.7) +
+  scale_color_gradientn(colors = contPalette, name = "early to late hpf") +
+  facet_wrap(~ gene, scales = "free_y") +
+  labs(title = "Actin Ct Values (Reference Gene)") +
+  custom_theme() 
+
+actin_ct_plot_b <-  summarised_data %>% filter(gene == "actin") |> 
+  ggplot(aes(x = stage, y = mean_Ct, colour = hpf)) +
+  geom_point(size = 2, alpha = 0.7, position = position_jitter(width = 0.12, height = 0)) +
+  facet_wrap(~ gene, scales = "free_y") +
+  scale_color_gradientn(colors = contPalette, name = "early → late hpf") +
+  labs(
+    x = "",
+    y = "Mean Ct (technical replicates averaged)",
+    title = "Raw Ct quality control"
+  ) +
+  custom_theme() +
+  theme(legend.position = "right")
+
+actin_ct_plot_a + actin_ct_plot_b  + actin_ct_plot_a +
+  facet_wrap(~ stage)  
+  
+# confirm actin Ct values don't change with treatment/development
 anova_rawCt <- summarised_data %>%
   group_by(gene) %>%
   nest() %>%
@@ -166,7 +271,7 @@ anova_rawCt <- summarised_data %>%
     p.value = round(p.value, 6),
     significance = case_when(
       p.value < 0.001 ~ "***",
-      p.value < 0.01 ~ "**", 
+      p.value < 0.01 ~ "**",
       p.value < 0.05 ~ "*",
       TRUE ~ "ns"
     )
@@ -174,41 +279,57 @@ anova_rawCt <- summarised_data %>%
 
 anova_rawCt %>%
   format_pvalues() %>%
-  kable(digits = 4, caption = "Quality control: ANOVA raw Ct  showing actin stability")
-# actin: Non-significant effects - reference gene is stable
-
+  kable(digits = 4, caption = "Quality Control: ANOVA raw Ct showing actin stability") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
 ```
+
+**Interpretation:** Actin shows non-significant effects - reference gene is stable across conditions.
 
 ## ΔCt Calculation
 
-```{r}
-
-# Delta-Ct method: difference between Ct of housekeeping gene and target gene
-goi_data <- summarised_data %>% 
-  filter(gene != "actin") %>% 
+```{r delta_ct}
+# delta-Ct method: difference between Ct of housekeeping gene and target gene
+goi_data <- summarised_data %>%
+  filter(gene != "actin") %>%
   dplyr::rename("goiMean_Ct" = "mean_Ct")
 
-ref_data <- summarised_data %>% 
-  filter(gene == "actin") %>% 
+ref_data <- summarised_data %>%
+  filter(gene == "actin") %>%
   dplyr::rename("refMean_Ct" = "mean_Ct")
 
 delta_Ct <- left_join(goi_data, ref_data, 
-                      by = c("group", "hpf", "stage","bioRep")) |> 
-  dplyr::rename(gene_goi = gene.x,
-                goi_Ct = goiMean_Ct,
-                ref_Ct = refMean_Ct) |> 
-  relocate(group,bioRep, everything()) |> 
-  mutate(delta_Ct = goi_Ct - ref_Ct, # deltaCt
-         mRNArel=2^(-delta_Ct) # relative mRNA
-         )
+                      by = c("group", "hpf", "stage", "bioRep")) %>%
+  dplyr::rename(
+    gene_goi = gene.x,
+    goi_Ct = goiMean_Ct,
+    ref_Ct = refMean_Ct
+  ) %>%
+  relocate(group, bioRep, everything()) %>%
+  mutate(
+    delta_Ct = goi_Ct - ref_Ct,      # deltaCt
+    mRNArel = 2^(-delta_Ct)           # relative mRNA
+  )
 
-# Plot delta_Ct for each sample
+# plot delta_Ct for each sample
 delta_ct_plot <- ggplot(delta_Ct, aes(x = group, y = delta_Ct, colour = hpf)) +
   geom_point(size = 2, alpha = 0.7) +
   scale_color_gradientn(colors = contPalette, name = "early to late hpf") +
   facet_wrap(~ gene_goi, scales = "fixed") +
-  labs(x = "", 
-       y = "ΔCt (Target Gene - Reference)") +
+  labs(
+    x = "",
+    y = "ΔCt (Target Gene - Reference)",
+    title = "ΔCt Values Across Conditions"
+  ) +
+  custom_theme()
+
+delta_ct_plot
+
+# Quick visual sanity check of ΔCt
+delta_ct_plot <- ggplot(delta_Ct, aes(x = group, y = delta_Ct, colour = hpf)) +
+  geom_point(size = 2, alpha = 0.7, position = position_jitter(width = 0.1, height = 0)) +
+  scale_color_gradientn(colors = contPalette, name = "early → late hpf") +
+  facet_wrap(~ gene_goi, scales = "fixed") +
+  labs(x = "", y = "ΔCt (Target - Reference)", title = "ΔCt values") +
   custom_theme()
 
 delta_ct_plot
@@ -222,43 +343,51 @@ delta_Ct %>%
     n = n(),
     .groups = "drop"
   ) %>%
-  kable(digits = 6, caption = "mRNArel by Stage and Group")
-
+  kable(digits = 6, caption = "mRNArel by Stage and Group") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
 ```
 
-# Statistical analysis
+## Statistical Analysis
 
--   mRNA expression p-values - mostly interested whether +/- nkx2.1, is thr expression changing at each points?
+Does Nkx2.1 knockdown reduce Thr expression at each developmental stage?
 
-```{r}
+\### Wilcoxon Tests
 
-# Does Nkx2.1 knockdown reduce expression at each developmental stage?
+```{r wilcoxon_tests}
 
 #------------------------------------
 #  Wilcoxon tests
 #------------------------------------
-# Wilcoxon tests for group comparisons at each stage
 
+# wilcoxon tests for group comparisons at each stage
 stat_wilcox <- delta_Ct %>%
   group_by(stage, hpf) %>%
   wilcox_test(mRNArel ~ group) %>%
-  adjust_pvalue(method = "fdr") %>% # this is for correcting multiple comparison, but im interesteind in the level expression +/- KD at each timepoint
+  adjust_pvalue(method = "fdr") %>%
   add_significance() %>%
-  mutate(test_type = "Mann-Whitney U (independent samples)",
-         design = "Independent biological replicates across timepoints")
+  mutate(
+    test_type = "Mann-Whitney U (independent samples)",
+    design = "Independent biological replicates across timepoints"
+  )
 
-# 2. Add effect sizes to show biological relevance, not just statistical significance
+# add effect sizes to show biological relevance
 wilcox_with_effects <- delta_Ct %>%
   group_by(stage, hpf) %>%
   rstatix::wilcox_effsize(mRNArel ~ group) %>%
   left_join(stat_wilcox, by = c("stage", "hpf", "group1", "group2")) %>%
-  dplyr::select(stage, hpf, group1, group2, p.adj, p.adj.signif, effsize, magnitude)
+  select(stage, hpf, group1, group2, p.adj, p.adj.signif, effsize, magnitude)
 
 # pretty table
 wilcox_with_effects %>%
-  kable(digits = 4, format.args = list(scientific = TRUE), caption = "Wilcoxon Test Results by Stage with Effect Sizes")
-
+  kable(
+    digits = 4,
+    format.args = list(scientific = TRUE),
+    caption = "Wilcoxon Test Results by Stage with Effect Sizes"
+  ) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
 ```
+
+**Fold reductions:**
 
 -   7.7x reduction at earTII (0.0042 → 0.0005)
 -   31.3x reduction at midTII (0.0075 → 0.0002)
@@ -266,150 +395,335 @@ wilcox_with_effects %>%
 -   28.5x reduction at latTIII (0.0307 → 0.0011)
 -   38.3x reduction at larva (0.0702 → 0.0018)
 
-## Extra Stats
-
--   if I were to test for the global pattern over the time series =\> anova
-
-    | gene_goi | term        | interpretation                             |
-    |----------|-------------|--------------------------------------------|
-    | thr      | group       | Does Nkx2.1 knockdown affect *thr*?        |
-    | thr      | stage       | Does developmental stage affect *thr*?     |
-    | thr      | group:stage | Does the knockdown effect depend on stage? |
-
-    ```{r}
-
-    #------------------------------------
-    # ANOVA for time series effect
-    #------------------------------------
-    # # if multiple genes tested asame time
-    # anova_results <- delta_Ct %>%
-    #   group_by(gene_goi) %>%
-    #   nest() %>%
-    #   mutate(
-    #     model = map(data, ~ aov(delta_Ct ~ group * stage, data = .x)),
-    #     tidied = map(model, broom::tidy)
-    #   ) %>%
-    #   unnest(tidied) 
-    # 
-    # anova_results %>%
-    #   select(-2, -3) %>%
-    #   mutate(p.value = sprintf("%.3e", p.value)) %>% 
-    #   kable(digits = 2, caption = "ANOVA Results for Time Series Effect")
-    # 
-    # anova_results
-
-    # Two-way ANOVA for single gene (thr) expression
-    aov_result <- aov(mRNArel ~ group * stage, 
-                      data = delta_Ct %>% mutate(gene_goi = droplevels(gene_goi)))
-    aov_result %>% 
-      broom::tidy() %>% 
-      format_pvalues() %>%
-      kable(caption = "Two-way ANOVA: Group and Stage Effects")
-
-    # Tukey post-hoc tests 
-    tukey_results <- TukeyHSD(aov_result)
-    #tukey_group <- TukeyHSD(aov_result, which = "group") # for just the group term
-    # tukey_interaction <- TukeyHSD(aov_result, which = "group:stage") # for jusy interaction term
-
-    tukey_results %>% 
-      broom::tidy() |> 
-      dplyr::mutate(p.adj = sprintf("%.3e", adj.p.value)) %>%
-      dplyr::filter(term == "group" | term == "stage") |> 
-      kable(caption = "Tukey HSD Post-hoc Tests")
-
-    ```
-
-    This is extra QC of the stat analysys
-
 ```{r}
+# Summary stats for plotting
+plot_summary <- delta_Ct %>%
+  group_by(gene_goi, stage, hpf, group) %>%
+  summarise(
+    mean = mean(mRNArel, na.rm = TRUE),
+    se   = sd(mRNArel, na.rm = TRUE) / sqrt(sum(!is.na(mRNArel))),
+    .groups = "drop"
+  )
 
-# Does the knockdown alter the developmental trajectory (not just levels at each timepoint)
-# eg checking the effect over time
+# y-axis breaks on log scale
+.yvals <- delta_Ct$mRNArel
+.yvals <- .yvals[is.finite(.yvals) & .yvals > 0]
+y_range <- range(.yvals, na.rm = TRUE)
+y_breaks <- 10^(pretty(log10(y_range), n = 5))
+
+ggplot() +
+  geom_errorbar(
+    data = plot_summary,
+    aes(x = stage, ymin = pmax(mean - se, .Machine$double.eps), ymax = mean + se, group = group),
+    position = position_dodge(width = 0.8),
+    width = 0.2
+  ) +
+  geom_point(
+    data = delta_Ct,
+    aes(x = stage, y = mRNArel, colour = group),
+    position = position_jitterdodge(jitter.width = 0.15, dodge.width = 0.8),
+    size = 2,
+    alpha = 0.8
+  ) +
+  facet_wrap(~ gene_goi, scales = "free_y") +
+  scale_y_log10(breaks = y_breaks, labels = scales::label_number()) +
+  labs(
+    x = "Stage\n(hpf)",
+    y = "Relative expression (2^-ΔCt), log scale",
+    title = "thr RT-qPCR after Nkx2.1 knockdown"
+  ) +
+  custom_theme() +
+  theme(legend.position = "top") 
+
+```
+
+### ANOVA for Time Series Effect
+
+If testing for the global pattern over the time series:
+
+| gene_goi | term        | interpretation                             |
+|----------|-------------|--------------------------------------------|
+| thr      | group       | Does Nkx2.1 knockdown affect Thr?          |
+| thr      | stage       | Does developmental stage affect Thr?       |
+| thr      | group:stage | Does the knockdown effect depend on stage? |
+
+```{r anova_timeseries}
+
+#------------------------------------
+# ANOVA for time series effect
+#------------------------------------
+# # if multiple genes tested asame time
+# anova_results <- delta_Ct %>%
+#   group_by(gene_goi) %>%
+#   nest() %>%
+#   mutate(
+#     model = map(data, ~ aov(delta_Ct ~ group * stage, data = .x)),
+#     tidied = map(model, broom::tidy)
+#   ) %>%
+#   unnest(tidied) 
+# 
+# anova_results %>%
+#   select(-2, -3) %>%
+#   mutate(p.value = sprintf("%.3e", p.value)) %>% 
+#   kable(digits = 2, caption = "ANOVA Results for Time Series Effect")
+# 
+# anova_results
+
+# two-way ANOVA for single gene (thr) expression
+aov_result <- aov(mRNArel ~ group * stage,
+                  data = delta_Ct %>% mutate(gene_goi = droplevels(gene_goi))
+                  )
+
+aov_result %>%
+    broom::tidy() %>%
+    format_pvalues() %>%
+    kable(caption = "Two-way ANOVA: Group and Stage Effects") %>%
+    kable_styling(bootstrap_options = c("striped", "hover"))
+
+# tukey post-hoc tests
+tukey_results <- TukeyHSD(aov_result)
+#tukey_group <- TukeyHSD(aov_result, which = "group") # for just the group term
+#tukey_interaction <- TukeyHSD(aov_result, which = "group:stage") # for jusy interaction term
+
+tukey_results %>%
+  broom::tidy() %>%
+  mutate(p.adj = sprintf("%.3e", adj.p.value)) %>%
+  filter(term == "group" | term == "stage") %>%
+  kable(caption = "Tukey HSD Post-hoc Tests") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+## Extra QC: Trajectory Analysis
+
+Does the knockdown alter the developmental trajectory (not just levels at each timepoint)?
+
+\### Model Comparison: Interaction Effect
+
+```{r model_comparison}
 
 #------------------------------------
 # First check interaction time and KD
 #------------------------------------
-# Is the interaction model significantly better than the simpler model?
-# Does adding the group×time interaction significantly improve the model?
 
-# Compare models with and without interaction
-# Null model: mRNArel ~ group + hpf (parallel lines)
+# compare models with and without interaction
+# null model: mRNArel ~ group + hpf (parallel lines)
 null_model <- lm(mRNArel ~ group + hpf, data = delta_Ct)
-# Full model: mRNArel ~ group * hpf (different slopes)
+
+# full model: mRNArel ~ group * hpf (different slopes)
 full_model <- lm(mRNArel ~ group * hpf, data = delta_Ct)
 
 model_comparison <- anova(null_model, full_model)
-model_comparison %>% 
-  broom::tidy() %>% 
+
+model_comparison %>%
+  broom::tidy() %>%
   format_pvalues() %>%
-  kable(caption = "Likelihood Ratio Test: Is Interaction Model Better?")
-# Model comparison: p = 4.205e-12 (interaction model is better)
+  kable(caption = "Likelihood Ratio Test: Is Interaction Model Better?") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+**Interpretation:** Model comparison shows p = 4.205e-12 (interaction model is significantly better)
+
+\### Slope Comparison
+
+-   Are the linear slopes (rate of change over time) different between groups?
+-   Does the knockdown change how fast expression increases/decreases over development?
+
+```{r slope_comparison}
 
 #------------------------------------
 # test significant interaction time and KD loking at the slope
 #------------------------------------
 
-# Simple linear model testing group × time interaction
+# simple linear model testing group × time interaction
 trajectory_model <- lm(mRNArel ~ group * hpf, data = delta_Ct)
 trajectory_anova <- anova(trajectory_model)
-trajectory_anova %>% 
-  broom::tidy() %>% 
-  format_pvalues() %>%
-  kable(caption = "Mixed Model ANOVA: Group × Time Interaction")
-# Compare slopes between groups
-# Are the linear slopes (rate of change over time) different between groups?
-# Does the knockdown change how fast expression increases/decreases over development?
 
+trajectory_anova %>%
+  broom::tidy() %>%
+  format_pvalues() %>%
+  kable(caption = "Mixed Model ANOVA: Group × Time Interaction") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+# compare slopes between groups
 slope_comparison <- emtrends(trajectory_model, ~ group, var = "hpf")
 slope_test <- pairs(slope_comparison)
-slope_test %>% 
-  broom::tidy() %>% 
-  format_pvalues() %>%
-  kable(caption = "Slope Comparison Between Groups")
 
-# Polynomial model to test curvature differences
-# Are the curves/shapes of the trajectories different?
-# Does the knockdown change the curvature/non-linear pattern of development?
+slope_test %>%
+  broom::tidy() %>%
+  format_pvalues() %>%
+  kable(caption = "Slope Comparison Between Groups") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+**Question:** Are the linear slopes (rate of change over time) different between groups? Does the knockdown change how fast expression increases/decreases over development?
+
+\### Polynomial Model: Curvature
+
+```{r polynomial_model}
+
+#------------------------------------
+# polynomial model to test curvature differences
+#------------------------------------
 
 poly_model <- lm(mRNArel ~ group * poly(hpf, 2), data = delta_Ct)
 poly_anova <- anova(poly_model)
-poly_anova %>% 
-  broom::tidy() %>% 
+
+poly_anova %>%
+  broom::tidy() %>%
   format_pvalues() %>%
-  kable(caption = "Polynomial Model: Testing Curvature Differences")
-
-# plot with the different trajectories 
-trajectory_plot <- delta_Ct %>%
-  ggplot(aes(x = hpf, y = mRNArel, color = group, fill = group)) +
-  geom_point(alpha = 0.7, size = 5, shape = 21, color = "black") +
-  geom_smooth(method = "lm", formula = y ~ poly(x, 2), se = TRUE, alpha = 0.2, size = 1.5) +
-  labs(subtitle = "significant goup x time interaction: p = 3.7e-11***\nSlopes significantly different: p < 0.0001***",
-       x = "Hours Post Fertilization (hpf)",
-       y = "Relative mRNA Expression (2^-ΔCt)",
-       caption = "Most probably other genes on top of Nkx2.1 regulate Thr expression late in development"
-  ) +
-  scale_y_continuous(trans = "log10") +
-  scale_color_manual(
-    values = c("control" = "grey40", "sg Nkx2.1" = "#D55E00"),
-    name = ""
-  ) +
-  scale_fill_manual(
-    values = c("control" = "grey78", "sg Nkx2.1" = "#D55E00"),
-    name = ""
-  ) + 
-  custom_theme() +  
-  theme(
-    plot.title = element_text(face = "bold", hjust = 0.5, size = 16),
-    plot.subtitle = element_text(hjust = 0.5, size = 12, face = "italic"),
-    legend.position = "bottom"
-  )
-
-trajectory_plot
-
+  kable(caption = "Polynomial Model: Testing Curvature Differences") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
 ```
 
-Overall conclusion: Nkx2.1 regulates both the magnitude and temporal patterning of thr expression during embryonic development. Nkx2.1 control thr expression dynamics during early-mid development, but late expression is compensated by alternative
-regulatory mechanisms, explaining the partial rather than complete abolition observed in both qPCR and reporter assays.
+**Question:** Are the curves/shapes of the trajectories different? Does the knockdown change the curvature/non-linear pattern of development?
+
+\### Trajectory Plot
+
+```{r trajectory_plot, fig.width=12, fig.height=8}
+trajectory_plot <- delta_Ct %>%
+ggplot(aes(x = hpf, y = mRNArel, color = group, fill = group)) +
+    geom_point(alpha = 0.7, size = 5, shape = 21, color = "black") +
+    geom_smooth(
+      method = "lm", formula = y ~ poly(x, 2),
+      se = TRUE, alpha = 0.2, linewidth = 1.5
+    ) +
+    labs(
+      subtitle = paste(
+        "significant group x time interaction: p = 3.7e-11***\n",
+        "Slopes significantly different: p < 0.0001***"
+      ),
+      x = "Hours Post Fertilization (hpf)",
+      y = "Relative mRNA Expression (2^-ΔCt)",
+      caption = paste(
+        "Most probably other genes on top of Nkx2.1 regulate",
+        "Thr expression late in development"
+      )
+    ) +
+    scale_y_continuous(trans = "log10") +
+    scale_color_manual(
+      values = c("control" = "grey40", "sg Nkx2.1" = "#D55E00"),
+      name = ""
+    ) +
+    scale_fill_manual(
+      values = c("control" = "grey78", "sg Nkx2.1" = "#D55E00"),
+      name = ""
+    ) +
+    custom_theme() +
+    theme(
+      plot.title = element_text(face = "bold", hjust = 0.5, size = 16),
+      plot.subtitle = element_text(hjust = 0.5, size = 12, face = "italic"),
+      legend.position = "bottom"
+    )
+
+trajectory_plot
+```
+
+## Main Figure Panel
+
+```{r main_figure, fig.width=12, fig.height=8}
+# axis range & breaks
+y_range <- range(delta_Ct$mRNArel, na.rm = TRUE)
+y_breaks <- round(10^(seq(log10(y_range[1]), log10(y_range[2]), length.out = 5)), 4)
+x_labels <- unique(delta_Ct$stage)
+x_breaks <- unique(delta_Ct$hpf)
+combined_labels <- paste(x_labels, "\n", x_breaks)
+
+# determine the maximum y-value at each x break
+max_y_values <- tapply(delta_Ct$mRNArel, delta_Ct$hpf, max)
+spacing_constant <- 0.01
+y_positions <- max_y_values + spacing_constant
+
+# annotation df with p-values
+annotations_df <- stat_wilcox %>%
+  left_join(distinct(delta_Ct, stage, hpf), by = c("stage", "hpf")) %>%
+  mutate(
+    label = case_when(
+      p.adj < 0.001 ~ "***",
+      p.adj < 0.01 ~ "**",
+      p.adj < 0.05 ~ "*",
+      TRUE ~ "ns"
+    ),
+    y_pos = y_positions[as.character(hpf)]
+  )
+
+# mRNA expression plot with p-values annotations
+mRNA_plot <- delta_Ct %>%
+  ggplot(aes(x = hpf, y = mRNArel, group = group, color = group, fill = group)) +
+  geom_point(alpha = 0.5, size = 6, shape = 21, color = "black") +
+  # geom_smooth(aes(fill = group), size=2,method = "loess", se = TRUE) + # line + CI
+  stat_summary(fun = mean, geom = "line", linewidth = 1.5) +
+  stat_summary(fun.data = mean_sd, geom = "ribbon", alpha = 0.3, color = NA) +
+  labs(x = "Developmental stage - hpf", 
+       y = "Relative mRNA Expression Thr (2^-ΔCt)") +
+  scale_y_continuous(trans = "log10", breaks = y_breaks) +
+  scale_x_continuous(breaks = x_breaks, labels = combined_labels) +
+  scale_color_manual(values = c("control" = "grey78", "sg Nkx2.1" = "#009E73"), name = "") +
+  scale_fill_manual(values = c("control" = "grey78", "sg Nkx2.1" = "#009E73"), name = "") + 
+  geom_text(data = annotations_df, 
+            aes(x = hpf, y = y_pos, label = label), 
+            size = 15, inherit.aes = FALSE, fontface = "bold") +
+  theme(legend.position = c(0.2, 0.9),
+          axis.title.x=element_blank()) +
+  custom_theme() 
+mRNA_plot
+```
+
+**Interpretation:**
+
+-   Early stages: Knockdown suppresses thr developmental increase
+-   Late stages: Some recovery/compensation appears
+
+## Save Plots
+
+```{r save_plots}
+if (SAVE_OUTPUTS) {
+  
+  width_in <- 40
+  aspect_ratio <- 3/4
+  height_in <- width_in * aspect_ratio
+  
+  width_mm <- 4 * width_in / 25.4
+  height_mm <- 4 * height_in / 25.4
+  
+  # save main figure with CairoPDF
+  CairoPDF(
+    opath("figS5H_thr_qPCR_nkx2.1-KD.pdf"),
+    width = width_mm,
+    height = height_mm
+  )
+  print(mRNA_plot)
+  dev.off()
+  
+  # save with cowplot (aspect ratio)
+  cowplot::save_plot(
+    plot = mRNA_plot,
+    base_height = height_in,
+    base_asp = width_in / height_in,
+    file = opath("figS5H_thr_qPCR_nkx2.1-KD_1.pdf")
+  )
+  
+  cowplot::save_plot(
+    plot = mRNA_plot,
+    base_height = 0.9 * 3.71,
+    base_asp = 0.9 * 1.618,
+    file = opath("figS5H_thr_qPCR_nkx2.1-KD_2.pdf")
+  )
+  
+  # save trajectory plot
+  ggsave(
+    opath("figS5H_trajectory_plot.pdf"),
+    plot = trajectory_plot,
+    width = 12, height = 8, device = cairo_pdf
+  )
+  
+  message("\nPlots saved to: ", out_dir)
+}
+```
+
+## Overall Conclusions
+
+Nkx2.1 acts as a developmental modulator rather than simple on/off switch, regulating expression magnitude early while other factors contribute to late developmental timing. Nkx2.1 controls Thr expression dynamics during early-mid development, but late
+expression is compensated by alternative regulatory mechanisms, explaining the partial rather than complete abolition observed in both qPCR and reporter assays.
 
 1.  **Controls**\
     Reference gene (actin) validation confirms stable expression across all conditions (p \> 0.3), ensuring observed effects are biologically meaningful rather than technical artifacts.
@@ -423,99 +737,10 @@ regulatory mechanisms, explaining the partial rather than complete abolition obs
     thr expression shows strong developmental regulation in controls (p \< 0.0001), increasing \~17-fold from 9.3 to 17.5 hpf, but this pattern is disrupted by Nkx2.1 knockdown.
 
 3.  The knockdown changes the developmental pattern, not just expression levels (GROUP × TIME interaction: p = 3.7e-11), with significantly different slopes and curvature between groups. This is consistent with the reporter assay showing **diminished but
-    not abolished Thr** expression in **ΔNkx2.1 binding site** reporter data. Nkx2.1 acts as a **developmental modulator** rather than simple on/off switch, regulating expression magnitude early while other factors contribute to late developmental timing.
+    not abolished Thr** expression in **ΔNkx2.1 binding site** reporter data.
 
-### Panel plot
+## Session Info
 
-1.  <div>
-
-    ```{r}
-    # axis range & breaks
-    y_range <- range(delta_Ct$mRNArel, na.rm = TRUE)
-    y_breaks <- round(10^(seq(log10(y_range[1]), log10(y_range[2]), length.out = 5)),4)
-    x_labels <- unique(delta_Ct$stage)
-    x_breaks <- unique(delta_Ct$hpf)
-    combined_labels <- paste(x_labels, "\n", x_breaks)
-
-    # Determine the maximum y-value at each x break and add p-values onto the bar plots from stat_wilcox
-    max_y_values <- tapply(delta_Ct$mRNArel, delta_Ct$hpf, max)
-    spacing_constant <- 0.01
-    y_positions <- max_y_values + spacing_constant
-
-    # annotation df with p-values
-    annotations_df <- stat_wilcox %>%
-      left_join(distinct(delta_Ct, stage, hpf), by = c("stage","hpf")) %>%
-      mutate(
-        label = case_when(
-          p.adj < 0.001 ~ "***",
-          p.adj < 0.01 ~ "**", 
-          p.adj < 0.05 ~ "*",
-          TRUE ~ "ns"
-        ),
-        y_pos = y_positions[as.character(hpf)]
-      )
-
-    # mRNA expression plot with p-values annotations
-    mRNA_plot <- delta_Ct %>%
-      ggplot(aes(x = hpf, y = mRNArel, group = group, color = group, fill = group)) +
-      geom_point(alpha = 0.5, size = 6, shape = 21, color = "black") +
-      # geom_smooth(aes(fill = group), size=2,method = "loess", se = TRUE) + # line + CI
-      stat_summary(fun = mean, geom = "line", linewidth = 1.5) +
-      stat_summary(fun.data = mean_sd, geom = "ribbon", alpha = 0.3, color = NA) +
-      labs(x = "Developmental stage - hpf", 
-           y = "Relative mRNA Expression Thr (2^-ΔCt)") +
-      scale_y_continuous(trans = "log10", breaks = y_breaks) +
-      scale_x_continuous(breaks = x_breaks, labels = combined_labels) +
-      scale_color_manual(values = c("control" = "grey78", "sg Nkx2.1" = "#009E73"), name = "") +
-      scale_fill_manual(values = c("control" = "grey78", "sg Nkx2.1" = "#009E73"), name = "") + 
-      geom_text(data = annotations_df, 
-                aes(x = hpf, y = y_pos, label = label), 
-                size = 15, inherit.aes = FALSE, fontface = "bold") +
-      theme(legend.position = c(0.2, 0.9),
-              axis.title.x=element_blank()) +
-      custom_theme() 
-
-    mRNA_plot
-
-    # ggsave(filename = "plot_cas9_TSmRNA_plot.pdf", plot = mRNA_plot, width = 12, height = 8, dpi = 300)
-
-
-    ```
-
-    </div>
-
-Early stages: Knockdown suppresses thr developmental increase
-
-Late stages: Some recovery/compensation appears
-
-## saving
-
-```{r}
-
-width_in <- 40 
-aspect_ratio <- 3/4   
-height_in <- width_in * aspect_ratio
-
-width_mm <- 4*width_in / 25.4
-height_mm <- 4*height_in / 25.4
-  
-  
-CairoPDF(file.path(file_path,  "figSX_thr_qPCR_nkx2.1-KD.pdf"), width = width_mm, height = height_mm)
-print(mRNA_plot)
-dev.off()
-  
-
-# Using aspect ratio instead of explicit dimensions
-cowplot::save_plot(
-  plot = mRNA_plot,
-  base_height = height_in,  # or any base height
-  base_asp = width_in / height_in,  # width:height ratio
-  file = file.path(file_path, "figSX_thr_qPCR_nkx2.1-KD_1.pdf")
-)
-
-cowplot::save_plot(plot = mRNA_plot,
-                   base_height = 0.9*3.71,
-                   base_asp = 0.9*1.618,
-                   file = file.path(file_path,'figSX_thr_qPCR_nkx2.1-KD_2.pdf'))
-
+```{r session_info}
+sessionInfo()
 ```
