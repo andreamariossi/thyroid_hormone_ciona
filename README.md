@@ -65,6 +65,7 @@ if (!require("BiocManager", quietly = TRUE))
 BiocManager::install("SummarizedExperiment")
 ```
 
+```
 # # ---- packages ----
 # suppressPackageStartupMessages({
 #   # Project Management & Paths
@@ -109,6 +110,7 @@ BiocManager::install("SummarizedExperiment")
 #   # Specialized Data Types
 #   library(SummarizedExperiment)
 # })
+```
 
 ## Running the Analysis
 
