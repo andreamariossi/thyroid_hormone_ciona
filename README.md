@@ -122,7 +122,7 @@ BiocManager::install("SummarizedExperiment")
 
 2. **Open R/RStudio**
    - Set your working directory to the repository folder, OR
-   - Open the `.Rproj` file if you create one
+   - Open the `.Rproj` file
 
 3. **Run the analysis**
    ```r
