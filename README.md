@@ -139,23 +139,17 @@ BiocManager::install("SummarizedExperiment")
 
 ## Data Sources
 
-- **RNA-seq data**: Hu et al. 2017 developmental time series
-- **Proteomics data**: Frese & Mariossi et al. 2024 TMTproC quantification
-
-## Figure Description
-
-
+- **RNA-seq data**: Hu et al. 2017 developmental time series (https://www.nature.com/articles/s41559-017-0318-0)
+- **Proteomics data**: Frese & Mariossi et al. 2024 TMTproC quantification (https://www.cell.com/iscience/fulltext/S2589-0042(24)00576-5)
 
 ## Notes
-
-- The script automatically detects whether it's running from a local Dropbox location or from the GitHub download
 - All paths are handled automatically using the `here` package
 - Outputs are saved to `output/` folder when running from GitHub
 
 ## Citation
 
 If you use this code or data, please cite:
-[Your paper citation here]
+[paper citation here to update]
 
 ## Contact
 
