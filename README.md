@@ -149,7 +149,8 @@ BiocManager::install("SummarizedExperiment")
 ## Citation
 
 If you use this code or data, please cite:
-[paper citation here to update]
+
+Mariossi, A., & Levine, M. S. (2026). A thyroid hormone-mediated opsin switch initiates metamorphosis in a proto-vertebrate. *Science Advances*, 12(20), eaeb8106. [https://doi.org/10.1126/sciadv.aeb8106](https://doi.org/10.1126/sciadv.aeb8106)
 
 ## Contact
 
