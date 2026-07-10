@@ -1,6 +1,9 @@
 # Thyroid Hormone Signaling in Ciona
 
-Analysis code and data for thyroid hormone receptor dynamics during *Ciona* development.
+Analysis code and data for thyroid hormone receptor dynamics during *Ciona* development, reproducing the results and figures from the paper:
+
+> **A thyroid hormone-mediated opsin switch initiates metamorphosis in a proto-vertebrate**  
+> Andrea Mariossi, Michael S. Levine. *Science Advances* (2026). DOI: [10.1126/sciadv.aeb8106](https://doi.org/10.1126/sciadv.aeb8106)
 
 ## Repository Structure
 
